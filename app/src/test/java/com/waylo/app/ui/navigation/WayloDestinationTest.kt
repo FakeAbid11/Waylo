@@ -1,7 +1,6 @@
 package com.waylo.app.ui.navigation
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -48,6 +47,6 @@ class WayloDestinationTest {
     fun fromRouteReturnsNullForUnknownRoutes() {
         assertNull(WayloDestination.fromRoute("active_walk"))
         assertNull(WayloDestination.fromRoute(null))
-        assertNotNull(WayloDestination.fromRoute("settings"))
+        assertNull(WayloDestination.fromRoute("settings"))
     }
 }
