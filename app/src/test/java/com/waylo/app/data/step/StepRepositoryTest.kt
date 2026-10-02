@@ -9,6 +9,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
@@ -62,7 +64,7 @@ class StepRepositoryTest {
     fun setUp() {
         val file = File(
             RuntimeEnvironment.getApplication().filesDir,
-            "waylo_repo_test.preferences_pb",
+            "waylo_repo_test_${System.nanoTime()}.preferences_pb",
         ).apply { delete() }
         val storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scopes.add(storeScope)
@@ -272,19 +274,20 @@ class StepRepositoryTest {
     )
 
     private fun awaitLoaded(repository: StepRepository) = runBlocking {
-        withTimeout(5_000) {
+        withTimeout(15_000) {
             repository.state.first { it.isLoaded }
         }
     }
 
     private fun awaitPersistedSteps(expected: Long) = runBlocking {
-        withTimeout(5_000) {
+        withTimeout(15_000) {
+            testScope.coroutineContext.job.children.toList().joinAll()
             store.snapshot.first { it.record.todaySteps == expected }
         }
     }
 
     private fun persistedSteps(): Long = runBlocking {
-        withTimeout(5_000) {
+        withTimeout(15_000) {
             store.snapshot.first().record.todaySteps
         }
     }

@@ -105,7 +105,7 @@ class StepStateStoreTest {
 
     private fun storeFile(): File = File(
         RuntimeEnvironment.getApplication().filesDir,
-        "waylo_steps_test.preferences_pb",
+        "waylo_steps_test_${System.nanoTime()}.preferences_pb",
     ).apply { delete() }
 
     private fun createStore(file: File = storeFile()): StepStateStore {
