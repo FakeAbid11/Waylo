@@ -4,11 +4,15 @@ Waylo is a walking-focused Android application that turns everyday walking into 
 step tracking, GPS walks, XP, levels, streaks, achievements, a fox mascot, and a virtual
 exploration journey.
 
-**Current implementation phase: Phase 1 — Foundation, architecture and design system.**
+**Current implementation phase: Phase 2 — first-launch onboarding and the permission
+foundation.**
 
-Only Phase 1 is implemented. GPS tracking, step counting, maps, XP/streak/achievement logic,
-onboarding, permissions, and any cloud features are intentionally *not* implemented yet; the
-screens show honest zero/empty placeholder states.
+Phase 1 (foundation, architecture, design system) and Phase 2 are implemented: a six-step
+onboarding flow (welcome, concepts, companion, permission explanations, permission requests,
+ready), DataStore-persisted onboarding completion, and a permission architecture with
+`ACTIVITY_RECOGNITION` (API 29+) and `POST_NOTIFICATIONS` (API 33+) support. GPS tracking, step
+counting, maps, XP/streak/achievement logic, and any cloud features are intentionally *not*
+implemented yet; the app screens show honest zero/empty placeholder states.
 
 ## Technology stack
 
@@ -16,6 +20,7 @@ screens show honest zero/empty placeholder states.
 - Jetpack Compose + Material 3
 - Navigation Compose
 - Room (local database foundation)
+- DataStore Preferences (onboarding state)
 - Kotlin Coroutines / StateFlow
 - JUnit 4 + Robolectric (unit tests)
 - Android Gradle Plugin 9.4, Gradle 9.6, JDK 17
@@ -26,18 +31,22 @@ screens show honest zero/empty placeholder states.
 app/src/main/java/com/waylo/app
 ├── MainActivity.kt
 ├── WayloApplication.kt
-├── core/util            formatting helpers
-├── data/local           Room database foundation
-├── domain/model         DailyGoal, UserProgress
+├── core/permissions       permission model, PermissionManager, settings intents
+├── core/util              formatting helpers
+├── data/local             Room database foundation
+├── data/preferences       DataStore-backed WayloPreferences (onboarding state)
+├── domain/model           DailyGoal, UserProgress
 ├── ui
-│   ├── components/      reusable Waylo components
-│   ├── explore/         Explore screen + decorative journey illustration
-│   ├── home/            Home screen + HomeViewModel
-│   ├── navigation/      routes + NavHost
-│   ├── profile/         Profile screen
-│   ├── progress/        Progress screen + ProgressViewModel
-│   └── theme/           colors, typography, shapes, gradients, dimensions
-└── ui/WayloApp.kt       Scaffold + bottom navigation
+│   ├── components/        reusable Waylo components
+│   ├── explore/           Explore screen + decorative journey illustration
+│   ├── home/              Home screen + HomeViewModel
+│   ├── navigation/        routes, NavHost, startup destination
+│   ├── onboarding/        first-launch onboarding flow
+│   ├── permissions/       PermissionsViewModel
+│   ├── profile/           Profile screen + permission status section
+│   ├── progress/          Progress screen + ProgressViewModel
+│   └── theme/             colors, typography, shapes, gradients, dimensions
+└── ui/WayloApp.kt         startup decision + Scaffold + bottom navigation
 ```
 
 Layering: Compose UI → ViewModel (`StateFlow<UiState>`) → domain models → (in later phases)
@@ -62,7 +71,8 @@ On Windows use `gradlew.bat assembleDebug`.
 ```
 
 Runs JVM unit tests: domain progress math, formatting, navigation routes, ViewModel initial
-states and Room initialization (Robolectric).
+states, Room initialization (Robolectric), onboarding persistence across restarts, the startup
+onboarding/main-app decision, and permission logic across API levels (Robolectric).
 
 ## GitHub Actions
 
