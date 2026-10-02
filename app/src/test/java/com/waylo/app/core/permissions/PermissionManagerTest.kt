@@ -107,6 +107,35 @@ class PermissionManagerTest {
         )
     }
 
+    @Test
+    fun locationPermissionsAreRequiredButNotRequestedDuringOnboarding() {
+        val manager = createManager(sdkInt = 33)
+
+        assertTrue(manager.isRequired(WayloPermission.CoarseLocation))
+        assertTrue(manager.isRequired(WayloPermission.FineLocation))
+        assertFalse(manager.permissionsToRequest().contains(WayloPermission.CoarseLocation))
+        assertFalse(manager.permissionsToRequest().contains(WayloPermission.FineLocation))
+    }
+
+    @Test
+    fun locationPermissionStatesAreTracked() {
+        val denied = createManager(
+            sdkInt = 33,
+            rationale = setOf(WayloPermission.FineLocation.manifestPermission),
+            requested = setOf(WayloPermission.FineLocation),
+        )
+        assertEquals(PermissionState.Denied, denied.stateOf(WayloPermission.FineLocation))
+
+        val granted = createManager(
+            sdkInt = 33,
+            granted = setOf(WayloPermission.FineLocation.manifestPermission),
+        )
+        assertEquals(PermissionState.Granted, granted.stateOf(WayloPermission.FineLocation))
+
+        val fresh = createManager(sdkInt = 33)
+        assertEquals(PermissionState.NotRequested, fresh.stateOf(WayloPermission.CoarseLocation))
+    }
+
     private fun createManager(
         sdkInt: Int,
         granted: Set<String> = emptySet(),

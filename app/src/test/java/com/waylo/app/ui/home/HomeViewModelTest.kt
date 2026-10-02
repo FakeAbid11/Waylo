@@ -2,8 +2,11 @@ package com.waylo.app.ui.home
 
 import com.waylo.app.core.permissions.PermissionState
 import com.waylo.app.data.step.StepRepository
+import com.waylo.app.data.walk.WalkingRepository
 import com.waylo.app.domain.model.DailyStepState
 import com.waylo.app.domain.model.StepStatus
+import com.waylo.app.domain.model.WalkingState
+import com.waylo.app.domain.model.WalkingStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
@@ -13,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HomeViewModelTest {
@@ -49,9 +53,31 @@ class HomeViewModelTest {
         }
     }
 
+    private class FakeWalkingRepository(
+        initialState: WalkingStatus = WalkingStatus(),
+    ) : WalkingRepository {
+        private val _status = MutableStateFlow(initialState)
+        override val status: StateFlow<WalkingStatus> = _status.asStateFlow()
+
+        override fun startWalk() = Unit
+        override fun pauseWalk() = Unit
+        override fun resumeWalk() = Unit
+        override fun stopWalk() = Unit
+        override fun retryTracking() = Unit
+        override fun dismissCompleted() = Unit
+        override fun attachService() = Unit
+        override fun detachService() = Unit
+        override fun reportError(message: String) = Unit
+
+        fun emit(status: WalkingStatus) {
+            _status.value = status
+        }
+    }
+
     private val testScope = CoroutineScope(Dispatchers.Unconfined)
     private val repository = FakeStepRepository()
-    private val viewModel = HomeViewModel(repository, testScope)
+    private val walkingRepository = FakeWalkingRepository()
+    private val viewModel = HomeViewModel(repository, walkingRepository, testScope)
 
     @After
     fun tearDown() {
@@ -73,7 +99,9 @@ class HomeViewModelTest {
         assertEquals(0, state.todaySteps)
         assertEquals(0.0, state.todayDistanceKm, 0.0)
         assertEquals(0, state.todayWalkingMinutes)
-        assertFalse(state.isStartWalkAvailable)
+        assertEquals(WalkingState.Idle, state.walkState)
+        assertTrue(state.isStartWalkAvailable)
+        assertEquals("Start Walk", state.startWalkLabel)
     }
 
     @Test
@@ -100,6 +128,36 @@ class HomeViewModelTest {
         assertEquals(8_000, state.goal.targetSteps)
         assertEquals(3_482, state.goal.completedSteps)
         assertEquals(StepStatus.Active, state.stepState.status)
+    }
+
+    @Test
+    fun ongoingWalkRelabelsTheStartButton() {
+        walkingRepository.emit(WalkingStatus(state = WalkingState.Active))
+
+        val state = viewModel.uiState.value
+
+        assertEquals(WalkingState.Active, state.walkState)
+        assertTrue(state.isStartWalkAvailable)
+        assertEquals("Return to Walk", state.startWalkLabel)
+    }
+
+    @Test
+    fun stoppingWalkHidesTheStartButton() {
+        walkingRepository.emit(WalkingStatus(state = WalkingState.Stopping))
+
+        val state = viewModel.uiState.value
+
+        assertFalse(state.isStartWalkAvailable)
+    }
+
+    @Test
+    fun completedWalkRestoresTheStartLabel() {
+        walkingRepository.emit(WalkingStatus(state = WalkingState.Completed))
+
+        val state = viewModel.uiState.value
+
+        assertTrue(state.isStartWalkAvailable)
+        assertEquals("Start Walk", state.startWalkLabel)
     }
 
     @Test

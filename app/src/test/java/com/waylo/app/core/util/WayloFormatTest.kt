@@ -48,4 +48,27 @@ class WayloFormatTest {
         assertEquals("0 min", WayloFormat.minutes(0))
         assertEquals("${WayloFormat.count(42)} min", WayloFormat.minutes(42))
     }
+
+    @Test
+    fun durationFormatsZeroAsBlankSlate() {
+        assertEquals("00:00:00", WayloFormat.duration(0))
+    }
+
+    @Test
+    fun durationPadsHoursMinutesAndSeconds() {
+        assertEquals("00:00:01", WayloFormat.duration(1_000))
+        assertEquals("00:23:41", WayloFormat.duration(1_421_000))
+        assertEquals("01:00:00", WayloFormat.duration(3_600_000))
+        assertEquals("02:01:05", WayloFormat.duration(7_265_000))
+    }
+
+    @Test
+    fun durationIgnoresPartialSeconds() {
+        assertEquals("00:00:01", WayloFormat.duration(1_999))
+    }
+
+    @Test
+    fun durationClampsNegativeValuesToZero() {
+        assertEquals("00:00:00", WayloFormat.duration(-5))
+    }
 }
