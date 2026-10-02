@@ -19,6 +19,18 @@ class WayloFormatTest {
     }
 
     @Test
+    fun countFormatsLongValues() {
+        assertEquals(NumberFormat.getIntegerInstance().format(3_482L), WayloFormat.count(3_482L))
+        assertEquals(NumberFormat.getIntegerInstance().format(1_000_000L), WayloFormat.count(1_000_000L))
+    }
+
+    @Test
+    fun countAgreesAcrossIntAndLong() {
+        assertEquals(WayloFormat.count(6_000), WayloFormat.count(6_000L))
+        assertEquals(WayloFormat.count(0), WayloFormat.count(0L))
+    }
+
+    @Test
     fun distanceFormatsWholeKilometers() {
         assertEquals("0 km", WayloFormat.distance(0.0))
         assertEquals("5 km", WayloFormat.distance(5.0))
