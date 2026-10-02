@@ -14,7 +14,11 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 
+@RunWith(RobolectricTestRunner::class)
 class StepStateStoreTest {
 
     private val scopes = mutableListOf<CoroutineScope>()
@@ -99,8 +103,10 @@ class StepStateStoreTest {
         assertEquals(0L, store.snapshot.first().record.todaySteps)
     }
 
-    private fun storeFile(): File = File.createTempFile("waylo_steps_test", ".preferences_pb")
-        .apply { delete() }
+    private fun storeFile(): File = File(
+        RuntimeEnvironment.getApplication().filesDir,
+        "waylo_steps_test.preferences_pb",
+    ).apply { delete() }
 
     private fun createStore(file: File = storeFile()): StepStateStore {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

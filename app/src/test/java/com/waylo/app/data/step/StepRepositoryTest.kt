@@ -17,7 +17,11 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 
+@RunWith(RobolectricTestRunner::class)
 class StepRepositoryTest {
 
     private class FakeStepSensorDataSource(
@@ -56,7 +60,10 @@ class StepRepositoryTest {
 
     @Before
     fun setUp() {
-        val file = File.createTempFile("waylo_repo_test", ".preferences_pb").apply { delete() }
+        val file = File(
+            RuntimeEnvironment.getApplication().filesDir,
+            "waylo_repo_test.preferences_pb",
+        ).apply { delete() }
         val storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scopes.add(storeScope)
         store = StepStateStore(PreferenceDataStoreFactory.create(scope = storeScope) { file })
