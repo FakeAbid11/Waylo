@@ -5,7 +5,10 @@ enum class PermissionState {
     Granted,
     Denied,
     PermanentlyDenied,
-    Unsupported,
+    Unsupported;
+
+    val canRequestAgain: Boolean
+        get() = this == NotRequested || this == Denied
 }
 
 data class PermissionStatus(

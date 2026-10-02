@@ -1,5 +1,7 @@
 package com.waylo.app.ui.home
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,12 +19,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.waylo.app.WayloApplication
+import com.waylo.app.core.permissions.PermissionState
+import com.waylo.app.core.permissions.WayloPermission
+import com.waylo.app.core.permissions.openAppSettings
 import com.waylo.app.core.util.WayloFormat
-import com.waylo.app.domain.model.DailyGoal
+import com.waylo.app.domain.model.DailyStepState
+import com.waylo.app.domain.model.StepStatus
 import com.waylo.app.domain.model.UserProgress
 import com.waylo.app.ui.components.WayloCard
 import com.waylo.app.ui.components.WayloMascot
@@ -35,15 +46,45 @@ import com.waylo.app.ui.theme.WayloDimens
 import com.waylo.app.ui.theme.WayloTheme
 
 @Composable
-fun HomeRoute(viewModel: HomeViewModel = viewModel()) {
+fun HomeRoute(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val application = context.applicationContext as WayloApplication
+    val viewModel: HomeViewModel = viewModel(
+        factory = HomeViewModel.factory(application.stepRepository),
+    )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    HomeScreen(state = state)
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        viewModel.refresh()
+    }
+
+    LifecycleResumeEffect(Unit) {
+        viewModel.refresh()
+        onPauseOrDispose { }
+    }
+
+    HomeScreen(
+        state = state,
+        onStepPermissionAction = {
+            val permission = application.permissionManager.stateOf(WayloPermission.Activity)
+            if (permission.canRequestAgain) {
+                application.permissionManager.markRequested(listOf(WayloPermission.Activity))
+                permissionLauncher.launch(arrayOf(WayloPermission.Activity.manifestPermission))
+            } else {
+                openAppSettings(context)
+            }
+        },
+        modifier = modifier,
+    )
 }
 
 @Composable
 fun HomeScreen(
     state: HomeUiState,
     modifier: Modifier = Modifier,
+    onStepPermissionAction: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -57,7 +98,7 @@ fun HomeScreen(
     ) {
         Greeting(state.greeting)
         MascotSection()
-        DailyGoalCard(state.goal)
+        StepsCard(state = state, onPermissionAction = onStepPermissionAction)
         WayloPrimaryButton(
             text = "Start Walk",
             onClick = {},
@@ -98,21 +139,100 @@ private fun MascotSection() {
 }
 
 @Composable
-private fun DailyGoalCard(goal: DailyGoal) {
+private fun StepsCard(state: HomeUiState, onPermissionAction: () -> Unit) {
     WayloCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "Today's Goal",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground,
+        when (state.stepState.status) {
+            StepStatus.Loading -> LoadingSteps()
+            StepStatus.SensorUnavailable -> UnavailableSteps()
+            StepStatus.PermissionNeeded -> PermissionSteps(
+                permissionState = state.stepState.permissionState,
+                onPermissionAction = onPermissionAction,
             )
-            Spacer(modifier = Modifier.weight(1f))
+
+            StepStatus.Active -> ActiveSteps(state)
+        }
+    }
+}
+
+@Composable
+private fun StepsHeader(percent: Int? = null) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = "Today's Steps",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        if (percent != null) {
             Text(
-                text = "${goal.progressPercent}%",
+                text = "$percent%",
                 style = MaterialTheme.typography.labelLarge,
                 color = WayloColors.Cyan,
             )
         }
+    }
+}
+
+@Composable
+private fun LoadingSteps() {
+    StepsHeader()
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        text = "Loading…",
+        style = MaterialTheme.typography.bodyLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Composable
+private fun UnavailableSteps() {
+    StepsHeader()
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        text = "Step counting isn't available on this device.",
+        style = MaterialTheme.typography.bodyLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Composable
+private fun PermissionSteps(
+    permissionState: PermissionState,
+    onPermissionAction: () -> Unit,
+) {
+    StepsHeader()
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        text = "Allow activity access so Waylo can count your steps.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    WayloPrimaryButton(
+        text = if (permissionState.canRequestAgain) "Allow Activity access" else "Open Settings",
+        onClick = onPermissionAction,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun ActiveSteps(state: HomeUiState) {
+    val goal = state.goal
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clearAndSetSemantics {
+                contentDescription = buildString {
+                    append(WayloFormat.count(goal.completedSteps))
+                    append(" steps today. Daily goal ")
+                    append(WayloFormat.count(goal.targetSteps))
+                    append(". ")
+                    append(goal.progressPercent)
+                    append(" percent complete.")
+                }
+            },
+    ) {
+        StepsHeader(percent = goal.progressPercent)
         Spacer(modifier = Modifier.height(8.dp))
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
@@ -133,6 +253,14 @@ private fun DailyGoalCard(goal: DailyGoal) {
             progress = goal.progress,
             modifier = Modifier.fillMaxWidth(),
         )
+        if (goal.isCompleted) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Daily goal complete!",
+                style = MaterialTheme.typography.titleMedium,
+                color = WayloColors.Success,
+            )
+        }
     }
 }
 
@@ -196,6 +324,17 @@ private fun TodaySummary(state: HomeUiState) {
 @Composable
 private fun HomeScreenPreview() {
     WayloTheme {
-        HomeScreen(state = HomeUiState())
+        HomeScreen(
+            state = HomeUiState(
+                stepState = DailyStepState(
+                    steps = 3_482,
+                    goal = 6_000,
+                    sensorAvailable = true,
+                    permissionState = PermissionState.Granted,
+                    isTracking = true,
+                    isLoaded = true,
+                ),
+            ),
+        )
     }
 }
