@@ -6,7 +6,9 @@ import kotlin.math.round
 
 object WayloFormat {
 
-    fun count(value: Int): String = NumberFormat.getIntegerInstance().format(value.toLong())
+    fun count(value: Int): String = count(value.toLong())
+
+    fun count(value: Long): String = NumberFormat.getIntegerInstance().format(value)
 
     fun distance(kilometers: Double): String {
         val rounded = round(kilometers * TENTHS) / TENTHS
