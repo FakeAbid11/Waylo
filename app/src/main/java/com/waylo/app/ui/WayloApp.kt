@@ -25,6 +25,7 @@ import com.waylo.app.WayloApplication
 import com.waylo.app.ui.components.WayloBottomNavigation
 import com.waylo.app.ui.navigation.ONBOARDING_ROUTE
 import com.waylo.app.ui.navigation.StartupDestination
+import com.waylo.app.ui.navigation.WALK_ROUTE
 import com.waylo.app.ui.navigation.WayloDestination
 import com.waylo.app.ui.navigation.WayloNavGraph
 import com.waylo.app.ui.theme.WayloColors
@@ -57,7 +58,7 @@ private fun WayloContent(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            if (currentRoute != null && currentRoute != ONBOARDING_ROUTE) {
+            if (currentRoute != null && currentRoute != ONBOARDING_ROUTE && currentRoute != WALK_ROUTE) {
                 WayloBottomNavigation(
                     currentRoute = currentRoute,
                     onNavigate = { route -> navController.navigateToBottomDestination(route) },

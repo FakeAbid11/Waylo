@@ -56,7 +56,9 @@ fun OnboardingRoute(
 
     OnboardingScreen(
         state = onboardingState,
-        permissions = permissionsState.statuses,
+        permissions = permissionsState.statuses.filter { status ->
+            status.permission.requestDuringOnboarding
+        },
         onBack = onboardingViewModel::previousPage,
         onContinue = onboardingViewModel::nextPage,
         onRequestPermissions = {

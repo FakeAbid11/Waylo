@@ -27,7 +27,8 @@ class PermissionManager(
     fun statuses(): List<PermissionStatus> = WayloPermission.entries.map { statusOf(it) }
 
     fun permissionsToRequest(): List<WayloPermission> = WayloPermission.entries.filter { permission ->
-        isRequired(permission) && !isGranted(permission.manifestPermission)
+        permission.requestDuringOnboarding && isRequired(permission) &&
+            !isGranted(permission.manifestPermission)
     }
 
     fun markRequested(permissions: Collection<WayloPermission>) {

@@ -46,11 +46,14 @@ import com.waylo.app.ui.theme.WayloDimens
 import com.waylo.app.ui.theme.WayloTheme
 
 @Composable
-fun HomeRoute(modifier: Modifier = Modifier) {
+fun HomeRoute(
+    onStartWalk: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val application = context.applicationContext as WayloApplication
     val viewModel: HomeViewModel = viewModel(
-        factory = HomeViewModel.factory(application.stepRepository),
+        factory = HomeViewModel.factory(application.stepRepository, application.walkingRepository),
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -76,6 +79,7 @@ fun HomeRoute(modifier: Modifier = Modifier) {
                 openAppSettings(context)
             }
         },
+        onStartWalk = onStartWalk,
         modifier = modifier,
     )
 }
@@ -85,6 +89,7 @@ fun HomeScreen(
     state: HomeUiState,
     modifier: Modifier = Modifier,
     onStepPermissionAction: () -> Unit = {},
+    onStartWalk: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -100,8 +105,8 @@ fun HomeScreen(
         MascotSection()
         StepsCard(state = state, onPermissionAction = onStepPermissionAction)
         WayloPrimaryButton(
-            text = "Start Walk",
-            onClick = {},
+            text = state.startWalkLabel,
+            onClick = onStartWalk,
             enabled = state.isStartWalkAvailable,
             modifier = Modifier.fillMaxWidth(),
         )

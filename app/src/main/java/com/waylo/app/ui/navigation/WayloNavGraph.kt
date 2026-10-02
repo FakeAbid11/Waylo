@@ -10,8 +10,10 @@ import com.waylo.app.ui.home.HomeRoute
 import com.waylo.app.ui.onboarding.OnboardingRoute
 import com.waylo.app.ui.profile.ProfileRoute
 import com.waylo.app.ui.progress.ProgressRoute
+import com.waylo.app.ui.walk.ActiveWalkRoute
 
 const val ONBOARDING_ROUTE = "onboarding"
+const val WALK_ROUTE = "walk"
 
 @Composable
 fun WayloNavGraph(
@@ -28,7 +30,16 @@ fun WayloNavGraph(
         composable(ONBOARDING_ROUTE) {
             OnboardingRoute(onFinished = onOnboardingFinished)
         }
-        composable(WayloDestination.Home.route) { HomeRoute() }
+        composable(WayloDestination.Home.route) {
+            HomeRoute(
+                onStartWalk = {
+                    navController.navigate(WALK_ROUTE) { launchSingleTop = true }
+                },
+            )
+        }
+        composable(WALK_ROUTE) {
+            ActiveWalkRoute(onDone = { navController.popBackStack() })
+        }
         composable(WayloDestination.Progress.route) { ProgressRoute() }
         composable(WayloDestination.Explore.route) { ExploreScreen() }
         composable(WayloDestination.Profile.route) { ProfileRoute() }

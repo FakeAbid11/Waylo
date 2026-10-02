@@ -352,16 +352,22 @@ private fun PageDescription(text: String) {
 private fun WayloPermission.icon(): ImageVector = when (this) {
     WayloPermission.Activity -> Icons.Filled.DirectionsWalk
     WayloPermission.Notifications -> Icons.Filled.Notifications
+    WayloPermission.CoarseLocation -> Icons.Filled.Place
+    WayloPermission.FineLocation -> Icons.Filled.Place
 }
 
 private fun denialMessage(status: PermissionStatus): String? = when (status.state) {
     PermissionState.Denied -> when (status.permission) {
         WayloPermission.Activity -> "Activity permission wasn't granted. Step counting may not be available until you allow it."
         WayloPermission.Notifications -> "Notifications aren't enabled, so reminders and walking updates won't be shown."
+        WayloPermission.CoarseLocation -> "Location access wasn't granted, so walks can't record distance."
+        WayloPermission.FineLocation -> "Precise location wasn't granted, so walk distances may be inaccurate."
     }
     PermissionState.PermanentlyDenied -> when (status.permission) {
         WayloPermission.Activity -> "Activity permission is blocked. You can enable it in Android settings."
         WayloPermission.Notifications -> "Notifications are blocked. You can enable them in Android settings."
+        WayloPermission.CoarseLocation -> "Location access is blocked. You can enable it in Android settings."
+        WayloPermission.FineLocation -> "Precise location is blocked. You can enable it in Android settings."
     }
     else -> null
 }
