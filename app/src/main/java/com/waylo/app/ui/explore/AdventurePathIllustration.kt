@@ -97,7 +97,6 @@ fun AdventurePathIllustration(modifier: Modifier = Modifier) {
             val labelY = (point.y + radius * LABEL_OFFSET_SCALE).coerceIn(0f, maxLabelY)
 
             drawText(
-                textMeasurer = textMeasurer,
                 textLayoutResult = layout,
                 topLeft = Offset(labelX, labelY),
             )
