@@ -12,9 +12,11 @@ import com.waylo.app.domain.model.WalkingStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOf
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -74,6 +76,11 @@ class HomeViewModelTest {
         override fun attachService() = Unit
         override fun detachService() = Unit
         override fun reportError(message: String) = Unit
+
+        override fun observeCompletedSessions(): Flow<List<WalkingSession>> = flowOf(emptyList())
+        override fun observeSession(id: Long): Flow<WalkingSession?> = flowOf(null)
+        override suspend fun routeForSession(sessionId: Long): WalkRoute = WalkRoute()
+        override suspend fun deleteActivity(sessionId: Long): Boolean = false
 
         fun emit(status: WalkingStatus) {
             _status.value = status

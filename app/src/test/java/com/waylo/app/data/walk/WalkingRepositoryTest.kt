@@ -3,6 +3,7 @@ package com.waylo.app.data.walk
 import androidx.room.Room
 import com.waylo.app.core.permissions.PermissionState
 import com.waylo.app.data.local.WayloDatabase
+import com.waylo.app.data.local.WalkingLocationPointEntity
 import com.waylo.app.data.local.WalkingSessionEntity
 import com.waylo.app.data.location.LocationDataSource
 import com.waylo.app.domain.model.LocationSample
@@ -21,6 +22,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -745,6 +747,141 @@ class WalkingRepositoryTest {
 
         assertEquals(1_500L, status.walkStepCount)
     }
+
+    @Test
+    fun completedHistoryExcludesActiveSessionsAndSortsNewestFirst() = runBlocking {
+        val dao = database.walkingDao()
+        val older = dao.insertSession(completedRow(startMillis = 100L))
+        val newest = dao.insertSession(completedRow(startMillis = 500L))
+        dao.insertSession(activeRow(startMillis = 900L))
+
+        val history = repository.observeCompletedSessions().first()
+
+        assertEquals(listOf(newest, older), history.map { it.id })
+        assertTrue(history.all { it.state == WalkingState.Completed })
+        assertEquals(listOf(500L, 100L), history.map { it.startMillis })
+    }
+
+    @Test
+    fun routeForSessionLoadsPersistedPointsInRecordedOrder() = runBlocking {
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        location.emit(sample(latitude = 52.0, timestampMillis = T0))
+        awaitStatus(repository) { it.hasFix }
+        currentTime = T0 + 60_000L
+        location.emit(sample(latitude = 52.001, timestampMillis = T0 + 60_000L))
+        awaitStatus(repository) { it.distanceMeters > 50.0 }
+        repository.stopWalk()
+        val completed = awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+
+        val route = repository.routeForSession(completed.sessionId!!)
+
+        assertEquals(listOf(0, 1), route.points.map { it.sequence })
+        assertEquals(listOf(52.0, 52.001), route.points.map { it.latitude })
+        assertTrue(repository.routeForSession(999L).isEmpty)
+    }
+
+    @Test
+    fun routeForSessionFiltersPointsThatCannotBePlotted() = runBlocking {
+        val dao = database.walkingDao()
+        val id = dao.insertSession(completedRow(startMillis = 300L))
+        dao.insertLocationPoint(row(id, sequence = 0, latitude = 52.0))
+        dao.insertLocationPoint(row(id, sequence = 1, latitude = 999.0))
+        dao.insertLocationPoint(row(id, sequence = 2, longitude = 999.0))
+        dao.insertLocationPoint(row(id, sequence = 3, latitude = 52.002))
+
+        val route = repository.routeForSession(id)
+
+        assertEquals(listOf(0, 3), route.points.map { it.sequence })
+        assertEquals(listOf(52.0, 52.002), route.points.map { it.latitude })
+    }
+
+    @Test
+    fun deleteActivityRemovesTheWalkAndClearsTheLastCompletedSession() = runBlocking {
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        location.emit(sample(latitude = 52.0, timestampMillis = T0))
+        awaitStatus(repository) { it.hasFix }
+        currentTime = T0 + 60_000L
+        location.emit(sample(latitude = 52.001, timestampMillis = T0 + 60_000L))
+        awaitStatus(repository) { it.distanceMeters > 50.0 }
+        repository.stopWalk()
+        val completed = awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+        val id = completed.sessionId!!
+        assertNotNull(repository.lastCompletedSession.value)
+
+        val removed = repository.deleteActivity(id)
+        settle()
+
+        assertTrue(removed)
+        assertNull(repository.lastCompletedSession.value)
+        assertEquals(0, database.walkingDao().sessionCount())
+        assertTrue(database.walkingDao().locationPoints(id).isEmpty())
+    }
+
+    @Test
+    fun deleteActivityRefusesAnOngoingSession() = runBlocking {
+        repository.startWalk()
+        val active = awaitStatus(repository) { it.state == WalkingState.Active }
+        settle()
+
+        val removed = repository.deleteActivity(active.sessionId!!)
+        settle()
+
+        assertFalse(removed)
+        assertEquals(1, database.walkingDao().sessionCount())
+        assertEquals(WalkingState.Active, repository.status.value.state)
+    }
+
+    private fun completedRow(startMillis: Long) = WalkingSessionEntity(
+        state = WalkingState.Completed.name,
+        startMillis = startMillis,
+        updatedMillis = startMillis + 60_000L,
+        distanceMeters = 1_000.0,
+        activeMillis = 600_000L,
+        pausedMillis = 0L,
+        activeSegmentStartMillis = null,
+        pausedSegmentStartMillis = null,
+        startLatitude = 52.0,
+        startLongitude = 13.0,
+        lastLatitude = 52.01,
+        lastLongitude = 13.01,
+        errorMessage = null,
+    )
+
+    private fun activeRow(startMillis: Long) = WalkingSessionEntity(
+        state = WalkingState.Active.name,
+        startMillis = startMillis,
+        updatedMillis = startMillis,
+        distanceMeters = 0.0,
+        activeMillis = 0L,
+        pausedMillis = 0L,
+        activeSegmentStartMillis = startMillis,
+        pausedSegmentStartMillis = null,
+        startLatitude = null,
+        startLongitude = null,
+        lastLatitude = null,
+        lastLongitude = null,
+        errorMessage = null,
+    )
+
+    private fun row(
+        sessionId: Long,
+        sequence: Int,
+        latitude: Double = 52.0,
+        longitude: Double = 13.0,
+    ) = WalkingLocationPointEntity(
+        sessionId = sessionId,
+        sequence = sequence,
+        latitude = latitude,
+        longitude = longitude,
+        timestampMillis = T0 + sequence * 1_000L,
+        accuracyMeters = 5f,
+        altitudeMeters = null,
+        speedMps = null,
+    )
 
     private fun createRepository(): WalkingRepositoryImpl = WalkingRepositoryImpl(
         locationDataSource = location,

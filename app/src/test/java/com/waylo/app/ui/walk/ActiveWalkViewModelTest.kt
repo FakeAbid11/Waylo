@@ -80,6 +80,11 @@ class ActiveWalkViewModelTest {
             reportErrorCalls += 1
         }
 
+        override fun observeCompletedSessions(): Flow<List<WalkingSession>> = flowOf(emptyList())
+        override fun observeSession(id: Long): Flow<WalkingSession?> = flowOf(null)
+        override suspend fun routeForSession(sessionId: Long): WalkRoute = WalkRoute()
+        override suspend fun deleteActivity(sessionId: Long): Boolean = false
+
         fun emit(status: WalkingStatus) {
             _status.value = status
         }
