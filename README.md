@@ -4,10 +4,11 @@ Waylo is a walking-focused Android application that turns everyday walking into 
 step tracking, GPS walks, XP, levels, streaks, achievements, a fox mascot, and a virtual
 exploration journey.
 
-**Current implementation phase: Phase 5 — MapLibre map with live walking route.**
+**Current implementation phase: Phase 7 — Finished activity + history.**
 
 Phase 1 (foundation, architecture, design system), Phase 2 (onboarding + permissions),
-Phase 3 (step tracking), Phase 4 (GPS walking engine) and Phase 5 are implemented: a
+Phase 3 (step tracking), Phase 4 (GPS walking engine), Phase 5 (MapLibre map),
+Phase 6 (workout statistics) and Phase 7 (finished activity + history) are implemented: a
 six-step onboarding flow (welcome,
 concepts, companion, permission explanations, permission requests, ready), DataStore-persisted
 onboarding completion, a permission architecture with `ACTIVITY_RECOGNITION` (API 29+) and
@@ -17,7 +18,10 @@ state, a user-configurable daily step goal (default 6,000; range 1,000–100,000
 the Profile screen, a GPS walking engine with foreground tracking, pause/resume, filtered
 distance, and Room-persisted sessions, plus an online MapLibre map on the Active Walk screen
 with a live route polyline, current-position marker, camera follow/recenter and honest
-loading/offline/style-error states. Offline maps, XP/streak/achievement logic, and any cloud
+loading/offline/style-error states, workout statistics (distance, duration, pace, speed,
+estimated calories, walk steps) with a completion summary, and a finished-activity screen
+with an activity history (date-grouped, newest first) offering route replay and confirmed
+deletion. Offline maps, XP/streak/achievement logic, and any cloud
 features are intentionally *not* implemented yet; those screens show honest zero/empty
 placeholder states.
 
@@ -26,8 +30,8 @@ placeholder states.
 - Kotlin
 - Jetpack Compose + Material 3
 - Navigation Compose
-- Room (walk session + route point persistence, schema migration 1 → 2)
-- DataStore Preferences (onboarding state, daily step goal + step baseline)
+- Room (walk session + route point persistence, schema migrations 1 → 3)
+- DataStore Preferences (onboarding state, daily step goal, step baseline + weight)
 - Android sensor APIs (`TYPE_STEP_COUNTER`)
 - Android location APIs (`LocationManager`, `Location.distanceBetween`)
 - MapLibre Native for Android (`org.maplibre.gl:android-sdk-opengl:13.6.1`)
@@ -270,7 +274,7 @@ Failing compilation or failing unit tests fail the workflow.
 - Persistence: distance, duration and the final step count are stored at stop;
   averages and calories are re-derived from persisted data. A new
   `lastCompletedSession: StateFlow` exposes the most recent finished walk (restored
-  at startup) for tests and later phases — there is no history UI in this phase.
+  at startup) for tests; Phase 7 builds the history UI on top of it.
 - UI: an ongoing walk keeps status/duration/distance primary and adds a compact stats
   card (current/average pace, current/average speed, Est. calories, walk steps — all
   rendering `—` when unavailable); the completion summary shows six tiles (distance,
@@ -282,6 +286,49 @@ Failing compilation or failing unit tests fail the workflow.
   snapshot, unavailable, reset, process-death recovery, `lastCompletedSession`
   restore), Room migration 2→3 test (new columns, preserved data), preferences weight
   test, raw sensor counter test and ViewModel statistics tests.
+
+## Finished activity and history (Phase 7)
+
+- Navigation flow: finishing a walk dismisses the live session and opens the finished
+  activity screen for that walk (`activity/{activityId}`), popping the walk screen so
+  Back returns to where the walk was started and the next walk starts fresh. History is
+  reachable from Profile → Activity → "Activity history"; both screens are full-screen
+  sub-pages (bottom bar hidden) with a back arrow, and cards open their activity detail.
+- Activity history: completed sessions only (never an ongoing walk) through one Room
+  query sorted newest first (`startMillis DESC, id DESC` as the stable secondary key),
+  grouped into Today / Yesterday / date sections in the device's local time, each card
+  showing date · time, distance, duration, average pace and walk steps — session metadata
+  only; route points are never loaded on this screen. Empty state: "No walks yet / Your
+  completed walks will appear here. / Start your first walk".
+- Finished activity detail: header with the full date and start (and end) times, the
+  recorded route replayed on the existing MapLibre map (the camera fits the route exactly
+  once with padding, never following), and the same six statistics as the Phase 6
+  completion summary (distance, duration, avg pace, avg speed, Est. kcal, steps) computed
+  by the same `WorkoutStatisticsCalculator` from persisted distance/active time plus the
+  current Profile weight — identical values on completion, history and detail; missing
+  weight, steps or pace render `—`.
+- Honest map states: route loading, "Route unavailable" (no recorded points or an
+  unloadable route), offline and style-error states with retry; statistics stay visible
+  in every one of them, and no location permission is requested on these screens.
+- Deletion: "Delete walk" opens a confirmation dialog ("Delete this walk?" / "This
+  activity and its recorded route will be permanently removed." / Cancel / Delete) and
+  removes the session row and its route points in a single Room transaction that refuses
+  non-completed sessions; other walks, daily steps and settings are untouched, and a walk
+  deleted while its screen is open becomes "Activity not found".
+- Date/time: `WayloDateFormatter` (java.time, injectable zone/clock, fixed English
+  labels) renders Today / Yesterday / `Sep 28, 2026` group labels, `6:42 PM` times and
+  `September 28, 2026` full dates in local time — tests cover midnight, year and timezone
+  boundaries.
+- Limitation (honest): pause-break markers remain memory-only (Phase 5), so a route
+  replayed after process death draws as one continuous line; calories are re-derived from
+  the current weight whenever a walk is viewed (Phase 6 behavior).
+- Tests (308 total, 41 added): `WalkingDaoTest` (completed-only ordering, start-time
+  tie-breaks, reactive flow, atomic delete, active-session refusal), repository
+  history/route/delete tests, `WayloDateFormatterTest`, `ActivityHistoryViewModelTest`
+  (grouping, labels, error, retry, deletion updates, timezone) and
+  `ActivityDetailViewModelTest` (Phase 6 statistics regression, NotFound/Error/retry,
+  route-failure fallback, camera fitting, deletion). No Compose UI tests exist in this
+  project, so none were added.
 
 ## Design system
 
