@@ -295,16 +295,16 @@ class WalkingRepositoryTest {
 
         repository.startWalk()
         awaitStatus(repository) { it.state == WalkingState.Active }
-        allowCollectorToCatchUp()
+        awaitHistoryTail(history, WalkingState.Active)
         repository.pauseWalk()
         awaitStatus(repository) { it.state == WalkingState.Paused }
-        allowCollectorToCatchUp()
+        awaitHistoryTail(history, WalkingState.Paused)
         repository.resumeWalk()
         awaitStatus(repository) { it.state == WalkingState.Active }
-        allowCollectorToCatchUp()
+        awaitHistoryTail(history, WalkingState.Active)
         repository.stopWalk()
         awaitStatus(repository) { it.state == WalkingState.Completed }
-        allowCollectorToCatchUp()
+        awaitHistoryTail(history, WalkingState.Completed)
         collector.cancel()
 
         assertEquals(
@@ -1056,12 +1056,15 @@ class WalkingRepositoryTest {
     }
 
     /**
-     * StateFlow conflates while slow collectors are queued, so drain the Unconfined event
-     * loop between asserting a state and triggering the next transition. This keeps the
-     * history assertion deterministic instead of racing the collector.
+     * StateFlow conflates while slow collectors are queued, so wait until the collector has
+     * appended the transition we just observed before triggering the next one. Polling the
+     * appended tail instead of sleeping a fixed delay keeps the history assertion
+     * deterministic on loaded CI runners.
      */
-    private fun allowCollectorToCatchUp() = runBlocking {
-        withTimeout(15_000) { delay(25) }
+    private fun awaitHistoryTail(history: List<WalkingState>, expected: WalkingState) = runBlocking {
+        withTimeout(15_000) {
+            while (history.lastOrNull() != expected) delay(5)
+        }
     }
 
     private fun CoroutineScope.launchCollector(
