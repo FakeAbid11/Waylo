@@ -4,12 +4,12 @@ Waylo is a walking-focused Android application that turns everyday walking into 
 step tracking, GPS walks, XP, levels, streaks, achievements, a fox mascot, and a virtual
 exploration journey.
 
-**Current implementation phase: Phase 8 — XP, levels and streaks.**
+**Current implementation phase: Phase 9 — Mascot system.**
 
 Phase 1 (foundation, architecture, design system), Phase 2 (onboarding + permissions),
 Phase 3 (step tracking), Phase 4 (GPS walking engine), Phase 5 (MapLibre map),
-Phase 6 (workout statistics), Phase 7 (finished activity + history) and Phase 8
-(XP + levels + streaks) are implemented: a
+Phase 6 (workout statistics), Phase 7 (finished activity + history), Phase 8
+(XP + levels + streaks) and Phase 9 (mascot system) are implemented: a
 six-step onboarding flow (welcome,
 concepts, companion, permission explanations, permission requests, ready), DataStore-persisted
 onboarding completion, a permission architecture with `ACTIVITY_RECOGNITION` (API 29+) and
@@ -23,9 +23,10 @@ loading/offline/style-error states, workout statistics (distance, duration, pace
 estimated calories, walk steps) with a completion summary, and a finished-activity screen
 with an activity history (date-grouped, newest first) offering route replay and confirmed
 deletion, plus a local-first XP ledger with levels and day-streaks shown on Home, Profile,
-Progress and the finished-activity screen. Offline maps, achievements, the fox mascot/
-exploration journey, and any cloud features are intentionally *not* implemented yet; those
-screens show honest zero/empty placeholder states.
+Progress and the finished-activity screen, plus a state-driven fox mascot whose expression,
+message and animation follow a deterministic priority resolver. Offline maps, achievements,
+the exploration journey, and any cloud features are intentionally *not* implemented yet;
+those screens show honest zero/empty placeholder states.
 
 ## Technology stack
 
@@ -49,7 +50,7 @@ screens show honest zero/empty placeholder states.
 app/src/main/java/com/waylo/app
 ├── MainActivity.kt
 ├── WayloApplication.kt
-├── core/common          pure calculation helpers (step baseline/rollover, WalkingEngine, XP/level/streak math)
+├── core/common          pure calculation helpers (step baseline/rollover, WalkingEngine, XP/level/streak math, mascot resolver/content)
 ├── core/permissions     permission model, PermissionManager, settings intents
 ├── core/util            formatting helpers (distance, duration, counts)
 ├── data/local           Room database (settings + walking sessions + route points + XP ledger/progression)
@@ -122,8 +123,12 @@ restore) and `ActiveWalkViewModel` statistics wiring, the pure `XpCalculator`,
 `LevelCalculator` and `StreakCalculator`, the `xp_awards` DAO (unique-award index, ledger
 sums, reactive flows), `ProgressionRepository` behaviour (award outcomes, idempotency across
 repository restarts, day streaks, cascade deletion, era-guarded recovery, one-shot award
-events), completion-driven XP awards inside `WalkingRepository`, and the Home/Progress/
-ActivityDetail ViewModel progression wiring (level-up banner, XP card, one-shot event).
+events), completion-driven XP awards inside `WalkingRepository`, the Home/Progress/
+ActivityDetail ViewModel progression wiring (level-up banner, XP card, one-shot event),
+and the mascot system: the pure state/reaction priority resolver (`MascotResolverTest`:
+every signal, override order, determinism, context derivation from `UserProgress`) and the
+deterministic mascot messaging (`MascotContentTest`: per-state messages, XP/streak amounts,
+guilt-free language, unique contextual accessibility descriptions).
 
 ## GitHub Actions
 
@@ -379,7 +384,7 @@ Failing compilation or failing unit tests fail the workflow.
 - Limitations (honest): XP derives from walked distance only (steps and the daily goal
   grant none); pre-Phase-8 walks earn no XP; streaks refresh when the database changes
   (opening a history/detail screen recomputes them) rather than from a midnight timer;
-  awards are produced locally with no cloud sync, achievements, fox mascot or exploration
+  awards are produced locally with no cloud sync, achievements or exploration
   journey yet.
 - Tests (367 total, 59 added): `XpCalculatorTest` (formula + distance threshold),
   `LevelCalculatorTest` (curve, exact thresholds, huge-value bounds),
@@ -391,6 +396,49 @@ Failing compilation or failing unit tests fail the workflow.
   tests, and Home/Progress/ActivityDetail ViewModel tests (total XP wiring, level-up
   banner, consumed event). No Compose UI tests exist in this project, so none were added.
 
+## Mascot system (Phase 9)
+
+- Presentation-only companion: a friendly fox drawn entirely in code (Compose `Canvas` —
+  no raster artwork, no emoji) inside the existing `WayloMascot` component, which is now
+  state-driven: `WayloMascot(state, size, decorative)` renders expression, message and
+  animation for a `MascotState` and replaces the previous `Icons.Filled.Pets` placeholder.
+- Pure decision layer in `core/common`: `MascotContext` (walk state, completion, XP,
+  level-up, streak days, history flags) + `MascotResolver.resolve` returning a
+  `MascotDecision(state, reaction)` through one ordered `when` chain — priority is
+  **LevelUp > XpEarned > Celebrating > walk tier (Paused > Starting > Error >
+  Active/Stopping) > Streak > Encouraging (history) > Resting (no activity) > Idle**.
+  One-shot award events are *not* re-consumed here: screens derive `levelUp`/`xpAwarded`
+  from what they already show (Phase 8's banner and XP card), so there is exactly one
+  level-up mechanism.
+- Deterministic content: `MascotContent.message` maps each state/reaction to a fixed,
+  guilt-free line ("Make every walk an adventure.", "Let's go!", "Take your time.",
+  "Walk complete!", "Nice work! +N XP", "Level up!", "N days strong!",
+  "Your next walk is waiting.") with no randomness and no shaming language;
+  `MascotContent.contentDescription` gives every state a unique, contextual TalkBack
+  description ("Waylo fox …") instead of "Image"/"Fox".
+- Screen integration (no new destinations, no ViewModels, no persistence): Home's
+  mascot section resolves live state from `HomeUiState` (excluding `Idle`/`Completed` so
+  celebration can never stick); Active Walk shows a small decorative mascot in the
+  status panel (Starting → Encouraging, Active → Walking, Paused → Paused) and a
+  celebrating mascot above "Walk Complete"; the finished-activity screen shows a small
+  mascot + reaction message (XP/level-up aware) under the date; Progress shows a passive
+  mascot section (streak/history/resting); Profile's header mascot is decorative; onboarding
+  keeps its original layout and now shows the default idle fox with a meaningful
+  description.
+- Motion: breathing idle for Idle/Encouraging/Streak, gentle waddle for Walking, a finite
+  two-bounce celebration with a level-up glow for Celebrating/XpEarned/LevelUp; animations
+  are conditional composes that stop when the screen leaves composition, and all motion is
+  skipped when the system animator duration scale is 0 (reduce-motion). Decorative mascots
+  clear semantics; non-decorative ones expose the state's content description.
+- Limitations (honest): the fox is vector shapes drawn in Compose (a future art pass can
+  swap in authored assets behind the same `WayloMascot` API); there is no mascot
+  customization, accessories, animation on every screen, or per-user personality, and no
+  Compose UI tests exist in this project — behaviour is covered by pure JVM tests instead.
+- Tests (400 total, 33 added): `MascotResolverTest` (all states and reactions, full
+  priority matrix, determinism, `MascotContext.fromProgress` derivation) and
+  `MascotContentTest` (per-state messages, XP/streak formatting, guilt-language guard,
+  unique contextual descriptions).
+
 ## Design system
 
 - Dark theme (`#080B12` background, `#111722` surfaces) is the default and launches first; a
@@ -399,4 +447,4 @@ Failing compilation or failing unit tests fail the workflow.
   shapes (`WayloShapes`), dimensions (`WayloDimens`) and the signature cyan → blue → violet
   gradient (`WayloGradients`).
 - Reusable components: `WayloCard`, `WayloPrimaryButton`, `WayloProgressBar`, `WayloStatCard`,
-  `WayloSectionHeader`, `WayloMascot`, `WayloBottomNavigation`.
+  `WayloSectionHeader`, `WayloMascot` (state-driven fox mascot), `WayloBottomNavigation`.
