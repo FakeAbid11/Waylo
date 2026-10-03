@@ -1,6 +1,12 @@
 package com.waylo.app.ui.progress
 
+import com.waylo.app.core.common.AchievementCatalog
+import com.waylo.app.data.achievement.AchievementRepository
 import com.waylo.app.data.progression.ProgressionRepository
+import com.waylo.app.domain.model.AchievementContext
+import com.waylo.app.domain.model.AchievementSnapshot
+import com.waylo.app.domain.model.AchievementSummary
+import com.waylo.app.domain.model.AchievementUnlockedEvent
 import com.waylo.app.domain.model.ProgressionAwardEvent
 import com.waylo.app.domain.model.ProgressionResult
 import com.waylo.app.domain.model.UserProgress
@@ -45,6 +51,34 @@ class ProgressViewModelTest {
 
         fun emit(progress: UserProgress) {
             _progress.value = progress
+        }
+    }
+
+    private class FakeAchievementRepository : AchievementRepository {
+        private val _summary = MutableStateFlow(
+            AchievementSummary(unlockedCount = 0, totalCount = AchievementCatalog.definitions.size),
+        )
+
+        override val definitions = AchievementCatalog.definitions
+
+        override val snapshot: Flow<AchievementSnapshot> = flowOf(
+            AchievementSnapshot(
+                context = AchievementContext.empty(),
+                unlockedIds = emptySet(),
+                unlockedAtById = emptyMap(),
+            ),
+        )
+
+        override val summary: Flow<AchievementSummary> = _summary.asStateFlow()
+
+        override val unlockEvent: StateFlow<AchievementUnlockedEvent?> = MutableStateFlow(null)
+
+        override suspend fun reconcile(activityId: Long?): List<String> = emptyList()
+
+        override fun consumeUnlockEvent() = Unit
+
+        fun emit(summary: AchievementSummary) {
+            _summary.value = summary
         }
     }
 
@@ -106,6 +140,24 @@ class ProgressViewModelTest {
         assertEquals(12_345, state.progress.totalSteps)
         assertEquals(8.5, state.progress.totalDistanceKm, 0.001)
         assertEquals(84, state.progress.totalWalkingMinutes)
+    }
+
+    @Test
+    fun uiStateMirrorsTheAchievementSummary() {
+        val achievements = FakeAchievementRepository()
+        val viewModel = ProgressViewModel(
+            progression = null,
+            achievements = achievements,
+            stateScope = testScope,
+        )
+
+        assertEquals(0, viewModel.uiState.value.achievementsUnlocked)
+        assertEquals(AchievementCatalog.definitions.size, viewModel.uiState.value.achievementsTotal)
+
+        achievements.emit(AchievementSummary(unlockedCount = 12, totalCount = 23))
+
+        assertEquals(12, viewModel.uiState.value.achievementsUnlocked)
+        assertEquals(23, viewModel.uiState.value.achievementsTotal)
     }
 
     @Test

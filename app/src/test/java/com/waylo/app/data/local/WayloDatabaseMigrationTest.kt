@@ -46,6 +46,7 @@ class WayloDatabaseMigrationTest {
             WayloDatabase.MIGRATION_1_2,
             WayloDatabase.MIGRATION_2_3,
             WayloDatabase.MIGRATION_3_4,
+            WayloDatabase.MIGRATION_4_5,
         ).build()
 
         try {
@@ -109,6 +110,7 @@ class WayloDatabaseMigrationTest {
             WayloDatabase.MIGRATION_1_2,
             WayloDatabase.MIGRATION_2_3,
             WayloDatabase.MIGRATION_3_4,
+            WayloDatabase.MIGRATION_4_5,
         ).build()
         first.close()
 
@@ -120,6 +122,7 @@ class WayloDatabaseMigrationTest {
             WayloDatabase.MIGRATION_1_2,
             WayloDatabase.MIGRATION_2_3,
             WayloDatabase.MIGRATION_3_4,
+            WayloDatabase.MIGRATION_4_5,
         ).build()
 
         try {
@@ -143,6 +146,7 @@ class WayloDatabaseMigrationTest {
             WayloDatabase.MIGRATION_1_2,
             WayloDatabase.MIGRATION_2_3,
             WayloDatabase.MIGRATION_3_4,
+            WayloDatabase.MIGRATION_4_5,
         ).build()
 
         try {
@@ -199,6 +203,7 @@ class WayloDatabaseMigrationTest {
             WayloDatabase.MIGRATION_1_2,
             WayloDatabase.MIGRATION_2_3,
             WayloDatabase.MIGRATION_3_4,
+            WayloDatabase.MIGRATION_4_5,
         ).build()
 
         try {
@@ -284,6 +289,91 @@ class WayloDatabaseMigrationTest {
                     13.0,
                     "",
                 ),
+            )
+        } finally {
+            db.close()
+            helper.close()
+        }
+    }
+
+    @Test
+    fun migrationFrom4To5AddsAchievementsWithoutTouchingExistingData() {
+        createVersion4Database()
+
+        val database = Room.databaseBuilder(
+            context,
+            WayloDatabase::class.java,
+            databaseName,
+        ).addMigrations(
+            WayloDatabase.MIGRATION_1_2,
+            WayloDatabase.MIGRATION_2_3,
+            WayloDatabase.MIGRATION_3_4,
+            WayloDatabase.MIGRATION_4_5,
+        ).build()
+
+        try {
+            runBlocking {
+                // Existing data survives the non-destructive migration.
+                assertEquals("dark", database.settingsDao().getValue("appearance"))
+
+                val history = database.walkingDao().observeCompletedSessions().first()
+                assertEquals(1, history.size)
+                assertEquals(1_500.0, history[0].distanceMeters, 0.0)
+                assertEquals(2_000L, history[0].walkStepCount)
+
+                assertEquals(150, database.progressionDao().totalXp())
+                val progression = database.progressionDao()
+                    .progressionById(ProgressionEntity.SINGLE_ROW_ID)
+                assertNotNull(progression)
+
+                // Existing users start with every achievement locked — unlock rows
+                // are only created by explicit evaluation, never by migration.
+                assertEquals(0, database.achievementDao().unlockCount())
+                assertTrue(database.achievementDao().observeUnlocks().first().isEmpty())
+
+                // The new table is fully usable: insert-if-absent semantics hold.
+                val inserted = database.achievementDao().insertUnlock(
+                    AchievementEntity("first_walk", 9_000L),
+                )
+                assertTrue(inserted > 0L)
+                val conflicted = database.achievementDao().insertUnlock(
+                    AchievementEntity("first_walk", 9_999L),
+                )
+                assertEquals(-1L, conflicted)
+                assertEquals(1, database.achievementDao().unlockCount())
+                assertEquals(
+                    9_000L,
+                    database.achievementDao().unlockFor("first_walk")!!.unlockedAtMillis,
+                )
+            }
+        } finally {
+            database.close()
+        }
+    }
+
+    private fun createVersion4Database() {
+        createVersion3Database()
+
+        val configuration = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name(databaseName)
+            .callback(object : SupportSQLiteOpenHelper.Callback(4) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+
+                override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
+                    WayloDatabase.MIGRATION_3_4.migrate(db)
+                }
+
+                override fun onDowngrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+            })
+            .build()
+
+        val helper = FrameworkSQLiteOpenHelperFactory().create(configuration)
+        val db = helper.writableDatabase
+        try {
+            // A Phase 8 XP award from before Phase 10 must survive the migration.
+            db.execSQL(
+                "INSERT INTO `xp_awards` (`activityId`, `xp`, `awardedAt`) VALUES (?, ?, ?)",
+                arrayOf<Any>(42L, 150, 5_000L),
             )
         } finally {
             db.close()

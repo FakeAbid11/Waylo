@@ -3,6 +3,7 @@ package com.waylo.app.data.walk
 import androidx.room.Room
 import com.waylo.app.core.common.XpCalculator
 import com.waylo.app.core.permissions.PermissionState
+import com.waylo.app.data.achievement.AchievementRepositoryImpl
 import com.waylo.app.data.local.WayloDatabase
 import com.waylo.app.data.local.WalkingLocationPointEntity
 import com.waylo.app.data.local.WalkingSessionEntity
@@ -73,6 +74,7 @@ class WalkingRepositoryTest {
     private lateinit var location: FakeLocationDataSource
     private lateinit var repository: WalkingRepositoryImpl
     private lateinit var progression: ProgressionRepositoryImpl
+    private lateinit var achievements: AchievementRepositoryImpl
     private var permission = PermissionState.Granted
     private var currentTime = T0
     private var sensorCount: Long? = null
@@ -90,6 +92,7 @@ class WalkingRepositoryTest {
         currentTime = T0
         sensorCount = null
         progression = createProgression()
+        achievements = createAchievements()
         repository = createRepository()
     }
 
@@ -963,6 +966,146 @@ class WalkingRepositoryTest {
         assertEquals(WalkingState.Active, repository.status.value.state)
     }
 
+    @Test
+    fun completingAFirstWalkUnlocksTheFirstWalkAchievementExactlyOnce() {
+        sensorCount = 1_000L
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        location.emit(sample(latitude = 52.0, timestampMillis = T0))
+        awaitStatus(repository) { it.hasFix }
+        currentTime = T0 + 60_000L
+        location.emit(sample(latitude = 52.001, timestampMillis = T0 + 60_000L))
+        awaitStatus(repository) { it.distanceMeters > 50.0 }
+        repository.stopWalk()
+        val completed = awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+
+        val event = achievements.unlockEvent.value
+        assertNotNull(event)
+        assertEquals(completed.sessionId, event!!.activityId)
+        assertEquals(listOf("first_walk"), event.unlocks.map { it.id })
+        assertEquals(1, runBlocking { database.achievementDao().unlockCount() })
+        assertEquals(
+            currentTime,
+            runBlocking { database.achievementDao().unlockFor("first_walk") }!!.unlockedAtMillis,
+        )
+
+        // Restart: the startup reconciliation must not unlock or emit twice.
+        achievements.consumeUnlockEvent()
+        killScope()
+        progression = createProgression()
+        repository = createRepository()
+        settle()
+
+        assertEquals(1, runBlocking { database.achievementDao().unlockCount() })
+        assertNull(achievements.unlockEvent.value)
+    }
+
+    @Test
+    fun aSingleWalkCanUnlockDistanceAndStepAchievementsTogether() {
+        sensorCount = 5_000L
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        location.emit(sample(latitude = 52.0, timestampMillis = T0))
+        awaitStatus(repository) { it.hasFix }
+        repeat(10) { index ->
+            val step = index + 1
+            currentTime = T0 + step * 60_000L
+            location.emit(
+                sample(latitude = 52.0 + step * 0.001, timestampMillis = T0 + step * 60_000L),
+            )
+        }
+        val walked = awaitStatus(repository) { it.distanceMeters > 1_000.0 }
+        settle()
+        assertTrue(walked.distanceMeters >= 1_000.0)
+
+        sensorCount = 6_500L
+        repository.stopWalk()
+        awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+
+        val event = achievements.unlockEvent.value
+        assertNotNull(event)
+        assertEquals(
+            listOf("first_walk", "distance_1km", "steps_1000"),
+            event!!.unlocks.map { it.id },
+        )
+        assertEquals(3, runBlocking { database.achievementDao().unlockCount() })
+    }
+
+    @Test
+    fun startupReconciliationUnlocksPersistedHistoryLostToProcessDeath() {
+        runBlocking {
+            database.walkingDao().insertSession(
+                WalkingSessionEntity(
+                    state = WalkingState.Completed.name,
+                    startMillis = T0,
+                    updatedMillis = T0 + 60_000L,
+                    distanceMeters = 1_500.0,
+                    activeMillis = 600_000L,
+                    pausedMillis = 0L,
+                    activeSegmentStartMillis = null,
+                    pausedSegmentStartMillis = null,
+                    startLatitude = null,
+                    startLongitude = null,
+                    lastLatitude = null,
+                    lastLongitude = null,
+                    errorMessage = null,
+                ),
+            )
+        }
+
+        // The process died before any achievement evaluation could run.
+        val recovered = createRepository()
+        settle()
+
+        val unlocked = runBlocking { database.achievementDao().observeUnlocks().first() }
+            .map { it.achievementId }
+        assertTrue("first_walk" in unlocked)
+        assertTrue("distance_1km" in unlocked)
+        assertEquals(2, runBlocking { database.achievementDao().unlockCount() })
+
+        val event = achievements.unlockEvent.value
+        assertNotNull(event)
+        assertNull(event!!.activityId)
+        assertEquals(WalkingState.Idle, recovered.status.value.state)
+
+        // A second startup stays idempotent.
+        killScope()
+        achievements.consumeUnlockEvent()
+        repository = createRepository()
+        settle()
+
+        assertEquals(2, runBlocking { database.achievementDao().unlockCount() })
+        assertNull(achievements.unlockEvent.value)
+    }
+
+    @Test
+    fun deletingACompletedWalkKeepsItsAchievementsUnlocked() {
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        location.emit(sample(latitude = 52.0, timestampMillis = T0))
+        awaitStatus(repository) { it.hasFix }
+        currentTime = T0 + 60_000L
+        location.emit(sample(latitude = 52.001, timestampMillis = T0 + 60_000L))
+        awaitStatus(repository) { it.distanceMeters > 50.0 }
+        repository.stopWalk()
+        val completed = awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+        val id = completed.sessionId!!
+        assertEquals(1, runBlocking { database.achievementDao().unlockCount() })
+
+        val removed = runBlocking { repository.deleteActivity(id) }
+        settle()
+
+        assertTrue(removed)
+        assertEquals(1, runBlocking { database.achievementDao().unlockCount() })
+        assertNotNull(runBlocking { database.achievementDao().unlockFor("first_walk") })
+        // Reconciliation after deletion never revokes the earned milestone.
+        assertTrue(runBlocking { achievements.reconcile() }.isEmpty())
+        assertEquals(1, runBlocking { database.achievementDao().unlockCount() })
+    }
+
     private fun completedRow(startMillis: Long) = WalkingSessionEntity(
         state = WalkingState.Completed.name,
         startMillis = startMillis,
@@ -1019,7 +1162,14 @@ class WalkingRepositoryTest {
         now = { currentTime },
         measureDistance = { from, to -> flatDistance(from, to) },
         stepCountNow = { sensorCount },
+        achievements = achievements,
         scope = testScope,
+    )
+
+    private fun createAchievements() = AchievementRepositoryImpl(
+        database = database,
+        now = { currentTime },
+        zone = ZoneOffset.UTC,
     )
 
     private fun createProgression() = ProgressionRepositoryImpl(

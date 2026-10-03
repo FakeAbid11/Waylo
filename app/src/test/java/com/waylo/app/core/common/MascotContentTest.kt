@@ -52,6 +52,30 @@ class MascotContentTest {
     }
 
     @Test
+    fun achievementMessageCountsTheUnlocks() {
+        val single = MascotContext(achievementCount = 1)
+        assertEquals(
+            "Achievement unlocked!",
+            MascotContent.message(MascotResolver.resolve(single), single),
+        )
+        val multiple = MascotContext(achievementCount = 3)
+        assertEquals(
+            "3 achievements unlocked!",
+            MascotContent.message(MascotResolver.resolve(multiple), multiple),
+        )
+    }
+
+    @Test
+    fun achievementMessageAvoidsGuiltLanguage() {
+        val context = MascotContext(achievementCount = 2, xpAwarded = 120)
+        val message = MascotContent.message(MascotResolver.resolve(context), context).lowercase()
+        val banned = listOf("fail", "missed", "lazy", "behind", "should", "sorry", "guilt", "bad")
+        banned.forEach { word ->
+            assertFalse("Message \"$message\" contains banned word \"$word\"", message.contains(word))
+        }
+    }
+
+    @Test
     fun xpMessageIncludesTheAwardedAmount() {
         val context = MascotContext(xpAwarded = 150)
         val decision = MascotResolver.resolve(context)

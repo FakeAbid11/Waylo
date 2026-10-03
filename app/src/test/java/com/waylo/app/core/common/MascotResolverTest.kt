@@ -84,6 +84,37 @@ class MascotResolverTest {
     }
 
     @Test
+    fun achievementUnlockCelebratesBetweenLevelUpAndXp() {
+        val decision = MascotResolver.resolve(
+            MascotContext(
+                achievementCount = 1,
+                xpAwarded = 150,
+                justCompleted = true,
+                walkState = WalkingState.Active,
+            ),
+        )
+        assertEquals(MascotState.Celebrating, decision.state)
+        assertEquals(MascotReaction.AchievementUnlocked, decision.reaction)
+    }
+
+    @Test
+    fun levelUpStillOutranksAnAchievementUnlock() {
+        val decision = MascotResolver.resolve(
+            MascotContext(levelUp = true, achievementCount = 3, xpAwarded = 300),
+        )
+        assertEquals(MascotState.LevelUp, decision.state)
+        assertEquals(MascotReaction.LevelUp, decision.reaction)
+    }
+
+    @Test
+    fun zeroAchievementsNeverTriggersTheAchievementReaction() {
+        val decision = MascotResolver.resolve(MascotContext(achievementCount = 0, xpAwarded = 50))
+        assertEquals(MascotState.XpEarned, decision.state)
+        assertEquals(MascotReaction.XpEarned, decision.reaction)
+        assertFalse(MascotContext().achievementUnlocked)
+    }
+
+    @Test
     fun xpAwardOutranksCelebrationAndTheWalkTier() {
         val decision = MascotResolver.resolve(
             MascotContext(

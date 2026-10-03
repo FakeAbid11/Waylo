@@ -1,11 +1,18 @@
 package com.waylo.app.ui.history
 
+import com.waylo.app.core.common.AchievementCatalog
 import com.waylo.app.core.common.WorkoutStatisticsCalculator
+import com.waylo.app.data.achievement.AchievementRepository
 import com.waylo.app.data.map.MapCameraCommand
 import com.waylo.app.data.map.WalkMapCameraPolicy
 import com.waylo.app.data.map.WalkMapLoadState
 import com.waylo.app.data.progression.ProgressionRepository
 import com.waylo.app.data.walk.WalkingRepository
+import com.waylo.app.domain.model.AchievementContext
+import com.waylo.app.domain.model.AchievementSnapshot
+import com.waylo.app.domain.model.AchievementSummary
+import com.waylo.app.domain.model.AchievementUnlock
+import com.waylo.app.domain.model.AchievementUnlockedEvent
 import com.waylo.app.domain.model.ProgressionAwardEvent
 import com.waylo.app.domain.model.ProgressionResult
 import com.waylo.app.domain.model.UserProgress
@@ -61,6 +68,35 @@ class ActivityDetailViewModelTest {
         override fun consumeAwardEvent() {
             consumeCalls += 1
             _awardEvent.value = null
+        }
+    }
+
+    private class FakeAchievementRepository : AchievementRepository {
+        val events = MutableStateFlow<AchievementUnlockedEvent?>(null)
+        var consumeCalls = 0
+            private set
+
+        override val definitions = AchievementCatalog.definitions
+
+        override val snapshot = kotlinx.coroutines.flow.flowOf(
+            AchievementSnapshot(
+                context = AchievementContext.empty(),
+                unlockedIds = emptySet(),
+                unlockedAtById = emptyMap(),
+            ),
+        )
+
+        override val summary = kotlinx.coroutines.flow.flowOf(
+            AchievementSummary(unlockedCount = 0, totalCount = definitions.size),
+        )
+
+        override val unlockEvent: StateFlow<AchievementUnlockedEvent?> = events.asStateFlow()
+
+        override suspend fun reconcile(activityId: Long?): List<String> = emptyList()
+
+        override fun consumeUnlockEvent() {
+            consumeCalls += 1
+            events.value = null
         }
     }
 
@@ -400,6 +436,46 @@ class ActivityDetailViewModelTest {
         assertNotNull(progression._awardEvent.value)
     }
 
+    @Test
+    fun anAchievementUnlockForThisWalkIsSurfacedOnceAndConsumed() {
+        repository.sessionFlow.value = completedSession
+        val achievements = FakeAchievementRepository()
+        achievements.events.value = AchievementUnlockedEvent(
+            activityId = 7L,
+            unlocks = listOf(
+                AchievementUnlock("first_walk", 1_790_001_860_000L),
+                AchievementUnlock("distance_1km", 1_790_001_860_000L),
+            ),
+            unlockedAtMillis = 1_790_001_860_000L,
+        )
+
+        val loaded = awaitLoaded(createViewModel(achievements = achievements))
+
+        assertNotNull(loaded.achievementUnlock)
+        assertEquals(listOf("First Walk", "Walk 1 km"), loaded.achievementUnlock!!.titles)
+        assertEquals(2, loaded.achievementUnlock!!.count)
+        assertTrue(loaded.achievementUnlock!!.isMultiple)
+        assertEquals(1, achievements.consumeCalls)
+        assertNull(achievements.events.value)
+    }
+
+    @Test
+    fun anAchievementUnlockForAnotherWalkIsIgnoredAndLeftUnconsumed() {
+        repository.sessionFlow.value = completedSession
+        val achievements = FakeAchievementRepository()
+        achievements.events.value = AchievementUnlockedEvent(
+            activityId = 99L,
+            unlocks = listOf(AchievementUnlock("first_walk", 1L)),
+            unlockedAtMillis = 1L,
+        )
+
+        val loaded = awaitLoaded(createViewModel(achievements = achievements))
+
+        assertNull(loaded.achievementUnlock)
+        assertEquals(0, achievements.consumeCalls)
+        assertNotNull(achievements.events.value)
+    }
+
     private fun loaded(state: ActivityDetailUiState): WalkMapLoadState =
         (state as ActivityDetailUiState.Loaded).map.loadState
 
@@ -410,6 +486,7 @@ class ActivityDetailViewModelTest {
         networkStatus: Flow<Boolean> = flowOf(true),
         weightKg: Flow<Int?> = flowOf(null),
         progression: ProgressionRepository? = null,
+        achievements: AchievementRepository? = null,
     ): ActivityDetailViewModel = ActivityDetailViewModel(
         repository = repository,
         activityId = 7L,
@@ -418,6 +495,7 @@ class ActivityDetailViewModelTest {
         networkStatus = networkStatus,
         weightKg = weightKg,
         progression = progression,
+        achievements = achievements,
         onDeleted = { deletedCalls += 1 },
         stateScope = testScope,
     )
