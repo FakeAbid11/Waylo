@@ -20,10 +20,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.waylo.app.WayloApplication
 import com.waylo.app.core.util.WayloFormat
 import com.waylo.app.domain.model.UserProgress
 import com.waylo.app.ui.components.WayloCard
@@ -35,7 +37,13 @@ import com.waylo.app.ui.theme.WayloDimens
 import com.waylo.app.ui.theme.WayloTheme
 
 @Composable
-fun ProgressRoute(viewModel: ProgressViewModel = viewModel()) {
+fun ProgressRoute(
+    viewModel: ProgressViewModel = viewModel(
+        factory = ProgressViewModel.factory(
+            (LocalContext.current.applicationContext as WayloApplication).progressionRepository,
+        ),
+    ),
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     ProgressScreen(state = state)
 }

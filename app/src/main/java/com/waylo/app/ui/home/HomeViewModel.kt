@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.waylo.app.data.progression.ProgressionRepository
 import com.waylo.app.data.step.StepRepository
 import com.waylo.app.data.walk.WalkingRepository
 import com.waylo.app.domain.model.DailyGoal
@@ -12,9 +13,11 @@ import com.waylo.app.domain.model.DailyStepState
 import com.waylo.app.domain.model.UserProgress
 import com.waylo.app.domain.model.WalkingState
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 
 data class HomeUiState(
@@ -46,15 +49,21 @@ class HomeViewModel(
     private val stepRepository: StepRepository,
     private val walkingRepository: WalkingRepository,
     stateScope: CoroutineScope? = null,
+    progression: ProgressionRepository? = null,
 ) : ViewModel() {
+
+    private val progressFlow: Flow<UserProgress> =
+        progression?.progress ?: flowOf(UserProgress.empty())
 
     val uiState: StateFlow<HomeUiState> = combine(
         stepRepository.state,
         walkingRepository.status,
-    ) { stepState, walkStatus ->
+        progressFlow,
+    ) { stepState, walkStatus, progress ->
         HomeUiState(
             stepState = stepState,
             walkState = walkStatus.state,
+            progress = progress,
         )
     }.stateIn(
         scope = stateScope ?: viewModelScope,
@@ -79,9 +88,16 @@ class HomeViewModel(
         fun factory(
             stepRepository: StepRepository,
             walkingRepository: WalkingRepository,
+            progression: ProgressionRepository? = null,
         ): ViewModelProvider.Factory =
             viewModelFactory {
-                initializer { HomeViewModel(stepRepository, walkingRepository) }
+                initializer {
+                    HomeViewModel(
+                        stepRepository = stepRepository,
+                        walkingRepository = walkingRepository,
+                        progression = progression,
+                    )
+                }
             }
     }
 }

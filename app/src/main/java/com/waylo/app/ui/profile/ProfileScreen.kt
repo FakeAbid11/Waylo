@@ -65,6 +65,8 @@ fun ProfileRoute(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val stepState by application.stepRepository.state.collectAsStateWithLifecycle()
     val weightKg by application.wayloPreferences.weightKg.collectAsStateWithLifecycle(initialValue = null)
+    val progress by application.progressionRepository.progress
+        .collectAsStateWithLifecycle(initialValue = UserProgress.empty())
     val goalScope = rememberCoroutineScope()
 
     LifecycleResumeEffect(Unit) {
@@ -73,6 +75,7 @@ fun ProfileRoute(
     }
 
     ProfileScreen(
+        progress = progress,
         permissionStatuses = uiState.statuses,
         dailyStepGoal = stepState.goal,
         weightKg = weightKg,
@@ -173,7 +176,7 @@ private fun ProfileHeader(progress: UserProgress) {
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 Text(
-                    text = "Level ${progress.level} · ${WayloFormat.count(progress.xp)} XP",
+                    text = "Level ${progress.level} · ${WayloFormat.count(progress.totalXp)} XP",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

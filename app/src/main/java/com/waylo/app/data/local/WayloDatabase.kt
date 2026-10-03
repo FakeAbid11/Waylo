@@ -8,8 +8,14 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [SettingsEntity::class, WalkingSessionEntity::class, WalkingLocationPointEntity::class],
-    version = 3,
+    entities = [
+        SettingsEntity::class,
+        WalkingSessionEntity::class,
+        WalkingLocationPointEntity::class,
+        XpAwardEntity::class,
+        ProgressionEntity::class,
+    ],
+    version = 4,
     exportSchema = false,
 )
 abstract class WayloDatabase : RoomDatabase() {
@@ -17,6 +23,8 @@ abstract class WayloDatabase : RoomDatabase() {
     abstract fun settingsDao(): SettingsDao
 
     abstract fun walkingDao(): WalkingDao
+
+    abstract fun progressionDao(): ProgressionDao
 
     companion object {
         private const val DATABASE_NAME = "waylo.db"
@@ -66,6 +74,45 @@ abstract class WayloDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `xp_awards` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`activityId` INTEGER NOT NULL, " +
+                        "`xp` INTEGER NOT NULL, " +
+                        "`awardedAt` INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_xp_awards_activityId` " +
+                        "ON `xp_awards` (`activityId`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `progression` (" +
+                        "`id` INTEGER NOT NULL, " +
+                        "`totalXp` INTEGER NOT NULL, " +
+                        "`currentStreakDays` INTEGER NOT NULL, " +
+                        "`longestStreakDays` INTEGER NOT NULL, " +
+                        "`updatedAtMillis` INTEGER NOT NULL, " +
+                        "`createdAtMillis` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "INSERT OR IGNORE INTO `progression` (" +
+                        "`id`, `totalXp`, `currentStreakDays`, `longestStreakDays`, " +
+                        "`updatedAtMillis`, `createdAtMillis`) VALUES (?, ?, ?, ?, ?, ?)",
+                    arrayOf<Any>(
+                        1,
+                        0,
+                        0,
+                        0,
+                        0L,
+                        System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
+
         @Volatile
         private var instance: WayloDatabase? = null
 
@@ -80,7 +127,7 @@ abstract class WayloDatabase : RoomDatabase() {
                 context.applicationContext,
                 WayloDatabase::class.java,
                 DATABASE_NAME,
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
         }
     }
 }

@@ -6,6 +6,7 @@ import com.waylo.app.data.local.WalkingDao
 import com.waylo.app.data.local.WalkingLocationPointEntity
 import com.waylo.app.data.local.WalkingSessionEntity
 import com.waylo.app.data.location.LocationDataSource
+import com.waylo.app.data.progression.ProgressionRepository
 import com.waylo.app.domain.model.LocationSample
 import com.waylo.app.domain.model.WalkRoute
 import com.waylo.app.domain.model.WalkingLocationPoint
@@ -26,6 +27,7 @@ import kotlinx.coroutines.sync.withLock
 class WalkingRepositoryImpl(
     private val locationDataSource: LocationDataSource,
     private val dao: WalkingDao,
+    private val progression: ProgressionRepository,
     private val permissionState: () -> PermissionState,
     private val now: () -> Long,
     private val measureDistance: (LocationSample, LocationSample) -> Double,
@@ -155,6 +157,7 @@ class WalkingRepositoryImpl(
                 )
                 session = completed
                 persist(completed)
+                awardCompletedWalk(completed.id)
                 emitStatus()
                 _lastCompletedSession.value = completed
             }
@@ -199,7 +202,9 @@ class WalkingRepositoryImpl(
 
     override suspend fun deleteActivity(sessionId: Long): Boolean = mutex.withLock {
         loaded.await()
-        val removed = dao.deleteActivity(sessionId)
+        val removed = progression.deleteActivityCascade(sessionId) {
+            dao.deleteActivity(sessionId)
+        }
         if (removed && _lastCompletedSession.value?.id == sessionId) {
             _lastCompletedSession.value = null
         }
@@ -336,6 +341,7 @@ class WalkingRepositoryImpl(
             WalkingState.Starting, WalkingState.Active, WalkingState.Paused -> recover(restored)
             WalkingState.Stopping -> {
                 val at = now()
+                val interruptedAt = restored.updatedMillis
                 val completed = closeSegments(restored, at).copy(
                     state = WalkingState.Completed,
                     updatedMillis = at,
@@ -343,6 +349,7 @@ class WalkingRepositoryImpl(
                 )
                 persist(completed)
                 _lastCompletedSession.value = completed
+                recoverAward(completed.id, interruptedAt)
             }
             WalkingState.Error -> {
                 session = restored
@@ -350,7 +357,10 @@ class WalkingRepositoryImpl(
                 _route.value = loadRoute(restored.id)
                 emitStatus()
             }
-            WalkingState.Completed -> _lastCompletedSession.value = restored
+            WalkingState.Completed -> {
+                _lastCompletedSession.value = restored
+                recoverAward(restored.id, restored.updatedMillis)
+            }
             WalkingState.Idle -> Unit
         }
     }
@@ -398,6 +408,20 @@ class WalkingRepositoryImpl(
         val current = stepCountNow() ?: return null
         if (current < baseline) return null
         return (current - baseline).coerceAtLeast(0L)
+    }
+
+    private suspend fun awardCompletedWalk(activityId: Long) {
+        try {
+            progression.awardActivityXp(activityId)
+        } catch (expected: Exception) {
+        }
+    }
+
+    private suspend fun recoverAward(activityId: Long, sessionUpdatedMillis: Long) {
+        try {
+            progression.recoverAwardIfNeeded(activityId, sessionUpdatedMillis)
+        } catch (expected: Exception) {
+        }
     }
 
     private suspend fun persist(value: WalkingSession) {

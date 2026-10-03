@@ -5,6 +5,7 @@ import com.waylo.app.core.common.ratioToFraction
 
 data class UserProgress(
     val level: Int,
+    val totalXp: Int,
     val xp: Int,
     val xpToNextLevel: Int,
     val currentStreakDays: Int,
@@ -26,6 +27,7 @@ data class UserProgress(
         fun empty(): UserProgress {
             return UserProgress(
                 level = STARTING_LEVEL,
+                totalXp = 0,
                 xp = 0,
                 xpToNextLevel = STARTING_XP_TO_NEXT_LEVEL,
                 currentStreakDays = 0,

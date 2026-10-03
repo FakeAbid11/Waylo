@@ -17,6 +17,8 @@ import com.waylo.app.data.location.FrameworkDistance
 import com.waylo.app.data.location.LocationDataSource
 import com.waylo.app.data.preferences.WayloPreferences
 import com.waylo.app.data.preferences.wayloDataStore
+import com.waylo.app.data.progression.ProgressionRepository
+import com.waylo.app.data.progression.ProgressionRepositoryImpl
 import com.waylo.app.data.step.AndroidStepSensorDataSource
 import com.waylo.app.data.step.StepRepository
 import com.waylo.app.data.step.StepRepositoryImpl
@@ -25,6 +27,7 @@ import com.waylo.app.data.step.StepStateStore
 import com.waylo.app.data.walk.WalkingRepository
 import com.waylo.app.data.walk.WalkingRepositoryImpl
 import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -56,6 +59,14 @@ class WayloApplication : Application() {
 
     val walkingLocationDataSource: LocationDataSource by lazy { AndroidLocationDataSource(this) }
 
+    val progressionRepository: ProgressionRepository by lazy {
+        ProgressionRepositoryImpl(
+            database = wayloDatabase,
+            now = { System.currentTimeMillis() },
+            zone = ZoneId.systemDefault(),
+        )
+    }
+
     val mapNetworkStatus: Flow<Boolean> by lazy {
         callbackFlow {
             val connectivityManager = getSystemService(ConnectivityManager::class.java)
@@ -83,6 +94,7 @@ class WayloApplication : Application() {
         WalkingRepositoryImpl(
             locationDataSource = walkingLocationDataSource,
             dao = wayloDatabase.walkingDao(),
+            progression = progressionRepository,
             permissionState = { permissionManager.stateOf(WayloPermission.FineLocation) },
             now = { System.currentTimeMillis() },
             measureDistance = { from, to -> FrameworkDistance.between(from, to) },

@@ -53,7 +53,11 @@ fun HomeRoute(
     val context = LocalContext.current
     val application = context.applicationContext as WayloApplication
     val viewModel: HomeViewModel = viewModel(
-        factory = HomeViewModel.factory(application.stepRepository, application.walkingRepository),
+        factory = HomeViewModel.factory(
+            stepRepository = application.stepRepository,
+            walkingRepository = application.walkingRepository,
+            progression = application.progressionRepository,
+        ),
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -278,7 +282,7 @@ private fun XpCard(progress: UserProgress, modifier: Modifier = Modifier) {
             color = MaterialTheme.colorScheme.onBackground,
         )
         Text(
-            text = "${WayloFormat.count(progress.xp)} XP",
+            text = "${WayloFormat.count(progress.totalXp)} XP",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

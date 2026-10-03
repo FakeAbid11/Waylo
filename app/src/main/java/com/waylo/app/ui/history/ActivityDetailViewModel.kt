@@ -9,7 +9,9 @@ import com.waylo.app.core.common.WorkoutStatisticsCalculator
 import com.waylo.app.core.util.WayloDateFormatter
 import com.waylo.app.data.map.WalkMapCameraPolicy
 import com.waylo.app.data.map.WalkMapState
+import com.waylo.app.data.progression.ProgressionRepository
 import com.waylo.app.data.walk.WalkingRepository
+import com.waylo.app.domain.model.ProgressionAwardEvent
 import com.waylo.app.domain.model.WalkRoute
 import com.waylo.app.domain.model.WalkingSession
 import com.waylo.app.domain.model.WorkoutStatistics
@@ -39,6 +41,8 @@ sealed interface ActivityDetailUiState {
         val dateLabel: String,
         val startTimeLabel: String,
         val endTimeLabel: String?,
+        val xpAwarded: Int? = null,
+        val levelUp: ProgressionAwardEvent? = null,
     ) : ActivityDetailUiState
 }
 
@@ -49,6 +53,7 @@ class ActivityDetailViewModel(
     private val zoneId: () -> ZoneId = { ZoneId.systemDefault() },
     private val networkStatus: Flow<Boolean> = flowOf(true),
     private val weightKg: Flow<Int?> = flowOf(null),
+    private val progression: ProgressionRepository? = null,
     private val onDeleted: () -> Unit = {},
     stateScope: CoroutineScope? = null,
 ) : ViewModel() {
@@ -67,6 +72,8 @@ class ActivityDetailViewModel(
 
     private var session: WalkingSession? = null
     private var weight: Int? = null
+    private var xpAwarded: Int? = null
+    private var levelUp: ProgressionAwardEvent? = null
     private var seenSession = false
     private var sessionFailed = false
     private var routeRequested = false
@@ -74,6 +81,7 @@ class ActivityDetailViewModel(
 
     init {
         observeSession()
+        observeProgression()
         scope.launch {
             weightKg.collect { value ->
                 weight = value
@@ -143,6 +151,27 @@ class ActivityDetailViewModel(
         }
     }
 
+    private fun observeProgression() {
+        val currentProgression = progression ?: return
+        scope.launch {
+            currentProgression.observeAwardXp(activityId).collect { xp ->
+                xpAwarded = xp
+                rebuild()
+            }
+        }
+        scope.launch {
+            currentProgression.awardEvent.collect { event ->
+                if (event != null && event.activityId == activityId) {
+                    if (event.levelAfter > event.levelBefore) {
+                        levelUp = event
+                        rebuild()
+                    }
+                    currentProgression.consumeAwardEvent()
+                }
+            }
+        }
+    }
+
     private suspend fun loadRoute() {
         routeRequested = true
         routePayload.value = try {
@@ -192,6 +221,8 @@ class ActivityDetailViewModel(
             endTimeLabel = current.updatedMillis
                 .takeIf { it > current.startMillis }
                 ?.let { WayloDateFormatter.timeOfDay(it, zone) },
+            xpAwarded = xpAwarded,
+            levelUp = levelUp,
         )
     }
 
@@ -203,6 +234,7 @@ class ActivityDetailViewModel(
             zoneId: () -> ZoneId = { ZoneId.systemDefault() },
             networkStatus: Flow<Boolean> = flowOf(true),
             weightKg: Flow<Int?> = flowOf(null),
+            progression: ProgressionRepository? = null,
             onDeleted: () -> Unit = {},
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
@@ -213,6 +245,7 @@ class ActivityDetailViewModel(
                     zoneId = zoneId,
                     networkStatus = networkStatus,
                     weightKg = weightKg,
+                    progression = progression,
                     onDeleted = onDeleted,
                 )
             }

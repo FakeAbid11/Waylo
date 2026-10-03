@@ -43,6 +43,7 @@ import com.waylo.app.WayloApplication
 import com.waylo.app.core.util.WayloFormat
 import com.waylo.app.data.map.WalkMapLoadState
 import com.waylo.app.data.map.WalkMapState
+import com.waylo.app.domain.model.ProgressionAwardEvent
 import com.waylo.app.domain.model.WalkRoute
 import com.waylo.app.domain.model.WalkingSession
 import com.waylo.app.domain.model.WalkingState
@@ -71,6 +72,7 @@ fun ActivityDetailRoute(
             now = { System.currentTimeMillis() },
             networkStatus = application.mapNetworkStatus,
             weightKg = application.wayloPreferences.weightKg,
+            progression = application.progressionRepository,
             onDeleted = onDeleted,
         ),
     )
@@ -227,6 +229,10 @@ private fun LoadedContent(
             }
         }
 
+        state.levelUp?.let { levelUp ->
+            LevelUpBanner(levelUp = levelUp)
+        }
+
         RouteMapCard(
             state = state,
             onStyleLoaded = onMapStyleLoaded,
@@ -253,6 +259,7 @@ private fun LoadedContent(
             secondValue = WayloFormat.steps(state.statistics.walkSteps),
             secondLabel = "Steps",
         )
+        XpEarnedCard(xpAwarded = state.xpAwarded)
         if (state.weightKg == null) {
             Text(
                 text = "Add your weight in Profile to estimate calories.",
@@ -367,6 +374,44 @@ private fun MapPlaceholder(content: @Composable ColumnScope.() -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
                 content = content,
+            )
+        }
+    }
+}
+
+@Composable
+private fun XpEarnedCard(xpAwarded: Int?) {
+    WayloCard(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "XP earned",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = xpAwarded?.let { "+${WayloFormat.count(it)} XP" } ?: WayloFormat.DASH,
+                style = MaterialTheme.typography.titleMedium,
+                color = if (xpAwarded != null) WayloColors.Cyan else WayloColors.Orange,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LevelUpBanner(levelUp: ProgressionAwardEvent) {
+    WayloCard(modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "Level up!",
+                style = MaterialTheme.typography.titleLarge,
+                color = WayloColors.Cyan,
+            )
+            Text(
+                text = "You reached Level ${levelUp.levelAfter} · " +
+                    "+${WayloFormat.count(levelUp.xpAwarded)} XP",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
