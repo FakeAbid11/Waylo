@@ -23,6 +23,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.waylo.app.WayloApplication
 import com.waylo.app.ui.components.WayloBottomNavigation
+import com.waylo.app.ui.navigation.ACHIEVEMENTS_ROUTE
 import com.waylo.app.ui.navigation.ACTIVITY_ROUTE
 import com.waylo.app.ui.navigation.HISTORY_ROUTE
 import com.waylo.app.ui.navigation.ONBOARDING_ROUTE
@@ -64,6 +65,7 @@ private fun WayloContent(
                 currentRoute == ONBOARDING_ROUTE ||
                 currentRoute == WALK_ROUTE ||
                 currentRoute == HISTORY_ROUTE ||
+                currentRoute == ACHIEVEMENTS_ROUTE ||
                 currentRoute == ACTIVITY_ROUTE
             if (!hideBottomBar) {
                 WayloBottomNavigation(

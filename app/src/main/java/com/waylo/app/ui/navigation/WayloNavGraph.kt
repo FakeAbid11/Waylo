@@ -7,6 +7,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
+import com.waylo.app.ui.achievements.AchievementRoute
 import com.waylo.app.ui.explore.ExploreScreen
 import com.waylo.app.ui.history.ActivityDetailRoute
 import com.waylo.app.ui.history.ActivityHistoryRoute
@@ -20,6 +21,7 @@ const val ONBOARDING_ROUTE = "onboarding"
 const val WALK_ROUTE = "walk"
 const val HISTORY_ROUTE = "history"
 const val ACTIVITY_ROUTE = "activity/{activityId}"
+const val ACHIEVEMENTS_ROUTE = "achievements"
 
 fun activityRoute(activityId: Long): String = "activity/$activityId"
 
@@ -76,12 +78,24 @@ fun WayloNavGraph(
                 onDeleted = { navController.popBackStack() },
             )
         }
-        composable(WayloDestination.Progress.route) { ProgressRoute() }
+        composable(WayloDestination.Progress.route) {
+            ProgressRoute(
+                onOpenAchievements = {
+                    navController.navigate(ACHIEVEMENTS_ROUTE) { launchSingleTop = true }
+                },
+            )
+        }
         composable(WayloDestination.Explore.route) { ExploreScreen() }
         composable(WayloDestination.Profile.route) {
             ProfileRoute(
                 onOpenHistory = { navController.navigate(HISTORY_ROUTE) },
+                onOpenAchievements = {
+                    navController.navigate(ACHIEVEMENTS_ROUTE) { launchSingleTop = true }
+                },
             )
+        }
+        composable(ACHIEVEMENTS_ROUTE) {
+            AchievementRoute(onBack = { navController.popBackStack() })
         }
     }
 }

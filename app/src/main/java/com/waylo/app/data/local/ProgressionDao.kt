@@ -64,4 +64,10 @@ interface ProgressionDao {
             "FROM walking_sessions WHERE state = 'Completed'",
     )
     suspend fun completedTotals(): CompletedTotalsRow
+
+    @Query("SELECT COUNT(*) FROM walking_sessions WHERE state = 'Completed'")
+    fun observeCompletedWalkCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM walking_sessions WHERE state = 'Completed'")
+    suspend fun completedWalkCount(): Int
 }

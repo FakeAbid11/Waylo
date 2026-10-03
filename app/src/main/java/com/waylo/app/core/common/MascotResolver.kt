@@ -25,6 +25,7 @@ enum class MascotReaction {
     WalkCompleted,
     XpEarned,
     LevelUp,
+    AchievementUnlocked,
     StreakMilestone,
     NoRecentActivity,
 }
@@ -34,10 +35,15 @@ data class MascotContext(
     val justCompleted: Boolean = false,
     val xpAwarded: Int = 0,
     val levelUp: Boolean = false,
+    val achievementCount: Int = 0,
     val streakDays: Int = 0,
     val hasWalkHistory: Boolean = false,
     val hasNoActivity: Boolean = false,
 ) {
+    /** True when at least one achievement unlocked in this event. */
+    val achievementUnlocked: Boolean
+        get() = achievementCount > 0
+
     companion object {
         fun fromProgress(
             progress: UserProgress,
@@ -69,6 +75,8 @@ object MascotResolver {
 
     fun resolve(context: MascotContext): MascotDecision = when {
         context.levelUp -> MascotDecision(MascotState.LevelUp, MascotReaction.LevelUp)
+        context.achievementUnlocked ->
+            MascotDecision(MascotState.Celebrating, MascotReaction.AchievementUnlocked)
         context.xpAwarded > 0 -> MascotDecision(MascotState.XpEarned, MascotReaction.XpEarned)
         context.justCompleted -> MascotDecision(MascotState.Celebrating, MascotReaction.WalkCompleted)
         context.walkState == WalkingState.Paused ->

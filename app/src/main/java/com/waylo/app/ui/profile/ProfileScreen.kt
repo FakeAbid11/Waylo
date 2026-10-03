@@ -40,6 +40,7 @@ import com.waylo.app.core.util.WayloFormat
 import com.waylo.app.core.permissions.PermissionState
 import com.waylo.app.core.permissions.PermissionStatus
 import com.waylo.app.core.permissions.WayloPermission
+import com.waylo.app.domain.model.AchievementSummary
 import com.waylo.app.domain.model.DailyGoalValidator
 import com.waylo.app.domain.model.GoalValidationResult
 import com.waylo.app.domain.model.UserProgress
@@ -56,6 +57,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun ProfileRoute(
     onOpenHistory: () -> Unit = {},
+    onOpenAchievements: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val application = LocalContext.current.applicationContext as WayloApplication
@@ -67,6 +69,8 @@ fun ProfileRoute(
     val weightKg by application.wayloPreferences.weightKg.collectAsStateWithLifecycle(initialValue = null)
     val progress by application.progressionRepository.progress
         .collectAsStateWithLifecycle(initialValue = UserProgress.empty())
+    val achievementSummary by application.achievementRepository.summary
+        .collectAsStateWithLifecycle(initialValue = null)
     val goalScope = rememberCoroutineScope()
 
     LifecycleResumeEffect(Unit) {
@@ -76,10 +80,12 @@ fun ProfileRoute(
 
     ProfileScreen(
         progress = progress,
+        achievementSummary = achievementSummary,
         permissionStatuses = uiState.statuses,
         dailyStepGoal = stepState.goal,
         weightKg = weightKg,
         onOpenHistory = onOpenHistory,
+        onOpenAchievements = onOpenAchievements,
         onSaveDailyGoal = { goal ->
             goalScope.launch { application.stepRepository.setDailyGoal(goal) }
         },
@@ -93,10 +99,12 @@ fun ProfileRoute(
 @Composable
 fun ProfileScreen(
     progress: UserProgress = UserProgress.empty(),
+    achievementSummary: AchievementSummary? = null,
     permissionStatuses: List<PermissionStatus> = emptyList(),
     dailyStepGoal: Long = DailyGoalValidator.DEFAULT_STEPS,
     weightKg: Int? = null,
     onOpenHistory: () -> Unit = {},
+    onOpenAchievements: () -> Unit = {},
     onSaveDailyGoal: (Long) -> Unit = {},
     onSaveWeight: (Int?) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -127,7 +135,11 @@ fun ProfileScreen(
             onEditGoal = { showGoalDialog = true },
             onEditWeight = { showWeightDialog = true },
         )
-        ActivitySection(onOpenHistory = onOpenHistory)
+        ActivitySection(
+            onOpenHistory = onOpenHistory,
+            achievementSummary = achievementSummary,
+            onOpenAchievements = onOpenAchievements,
+        )
         SettingsSection()
 
         if (showGoalDialog) {
@@ -234,10 +246,22 @@ private fun PreferencesSection(
 }
 
 @Composable
-private fun ActivitySection(onOpenHistory: () -> Unit) {
+private fun ActivitySection(
+    onOpenHistory: () -> Unit,
+    achievementSummary: AchievementSummary?,
+    onOpenAchievements: () -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing)) {
         WayloSectionHeader(title = "Activity")
         WayloCard(contentPadding = PaddingValues(0.dp)) {
+            SettingRow(
+                title = "Achievements",
+                value = achievementSummary?.let {
+                    "${it.unlockedCount} of ${it.totalCount} unlocked"
+                } ?: WayloFormat.DASH,
+                onClick = onOpenAchievements,
+            )
+            SettingDivider()
             SettingRow(
                 title = "Activity history",
                 value = "View",

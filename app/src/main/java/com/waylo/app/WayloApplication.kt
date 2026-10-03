@@ -11,6 +11,8 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import com.waylo.app.core.permissions.PermissionManager
 import com.waylo.app.core.permissions.WayloPermission
+import com.waylo.app.data.achievement.AchievementRepository
+import com.waylo.app.data.achievement.AchievementRepositoryImpl
 import com.waylo.app.data.local.WayloDatabase
 import com.waylo.app.data.location.AndroidLocationDataSource
 import com.waylo.app.data.location.FrameworkDistance
@@ -67,6 +69,14 @@ class WayloApplication : Application() {
         )
     }
 
+    val achievementRepository: AchievementRepository by lazy {
+        AchievementRepositoryImpl(
+            database = wayloDatabase,
+            now = { System.currentTimeMillis() },
+            zone = ZoneId.systemDefault(),
+        )
+    }
+
     val mapNetworkStatus: Flow<Boolean> by lazy {
         callbackFlow {
             val connectivityManager = getSystemService(ConnectivityManager::class.java)
@@ -99,6 +109,7 @@ class WayloApplication : Application() {
             now = { System.currentTimeMillis() },
             measureDistance = { from, to -> FrameworkDistance.between(from, to) },
             stepCountNow = { stepRepository.currentSensorCount() },
+            achievements = achievementRepository,
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
         )
     }

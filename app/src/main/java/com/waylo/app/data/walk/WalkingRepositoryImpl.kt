@@ -2,6 +2,7 @@ package com.waylo.app.data.walk
 
 import com.waylo.app.core.common.WalkingEngine
 import com.waylo.app.core.permissions.PermissionState
+import com.waylo.app.data.achievement.AchievementRepository
 import com.waylo.app.data.local.WalkingDao
 import com.waylo.app.data.local.WalkingLocationPointEntity
 import com.waylo.app.data.local.WalkingSessionEntity
@@ -32,6 +33,7 @@ class WalkingRepositoryImpl(
     private val now: () -> Long,
     private val measureDistance: (LocationSample, LocationSample) -> Double,
     private val stepCountNow: () -> Long? = { null },
+    private val achievements: AchievementRepository? = null,
     private val scope: CoroutineScope,
 ) : WalkingRepository {
 
@@ -158,6 +160,7 @@ class WalkingRepositoryImpl(
                 session = completed
                 persist(completed)
                 awardCompletedWalk(completed.id)
+                reconcileAchievements(completed.id)
                 emitStatus()
                 _lastCompletedSession.value = completed
             }
@@ -335,7 +338,11 @@ class WalkingRepositoryImpl(
     }
 
     private suspend fun restoreSession() {
-        val persisted = dao.latestSession() ?: return
+        val persisted = dao.latestSession()
+        if (persisted == null) {
+            reconcileAchievements(null)
+            return
+        }
         val restored = persisted.toDomain()
         when (restored.state) {
             WalkingState.Starting, WalkingState.Active, WalkingState.Paused -> recover(restored)
@@ -363,6 +370,10 @@ class WalkingRepositoryImpl(
             }
             WalkingState.Idle -> Unit
         }
+        // Startup reconciliation: closes the process-death window (an evaluation
+        // that never ran) and retroactively unlocks achievements earned from
+        // existing local history. Unlocks are idempotent, so this is always safe.
+        reconcileAchievements(null)
     }
 
     private suspend fun recover(recovered: WalkingSession) {
@@ -421,6 +432,15 @@ class WalkingRepositoryImpl(
         try {
             progression.recoverAwardIfNeeded(activityId, sessionUpdatedMillis)
         } catch (expected: Exception) {
+        }
+    }
+
+    private suspend fun reconcileAchievements(activityId: Long?) {
+        try {
+            achievements?.reconcile(activityId)
+        } catch (expected: Exception) {
+            // Achievement evaluation must never break a completed walk; the next
+            // reconcile (stop, restore or startup) retries deterministically.
         }
     }
 

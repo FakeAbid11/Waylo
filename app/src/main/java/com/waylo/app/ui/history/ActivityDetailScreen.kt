@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -77,6 +78,7 @@ fun ActivityDetailRoute(
             networkStatus = application.mapNetworkStatus,
             weightKg = application.wayloPreferences.weightKg,
             progression = application.progressionRepository,
+            achievements = application.achievementRepository,
             onDeleted = onDeleted,
         ),
     )
@@ -237,6 +239,7 @@ private fun LoadedContent(
             justCompleted = true,
             xpAwarded = state.xpAwarded ?: 0,
             levelUp = state.levelUp != null,
+            achievementCount = state.achievementUnlock?.count ?: 0,
         )
         val mascotDecision = MascotResolver.resolve(mascotContext)
         Row(
@@ -258,6 +261,10 @@ private fun LoadedContent(
 
         state.levelUp?.let { levelUp ->
             LevelUpBanner(levelUp = levelUp)
+        }
+
+        state.achievementUnlock?.let { unlock ->
+            AchievementUnlockCard(unlock = unlock)
         }
 
         RouteMapCard(
@@ -421,6 +428,42 @@ private fun XpEarnedCard(xpAwarded: Int?) {
                 style = MaterialTheme.typography.titleMedium,
                 color = if (xpAwarded != null) WayloColors.Cyan else WayloColors.Orange,
             )
+        }
+    }
+}
+
+@Composable
+private fun AchievementUnlockCard(unlock: AchievementUnlockUi) {
+    WayloCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.EmojiEvents,
+                contentDescription = null,
+                tint = WayloColors.Cyan,
+                modifier = Modifier.size(28.dp),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = if (unlock.isMultiple) {
+                        "${unlock.count} achievements unlocked!"
+                    } else {
+                        "Achievement unlocked!"
+                    },
+                    style = MaterialTheme.typography.titleLarge,
+                    color = WayloColors.Cyan,
+                )
+                unlock.titles.forEach { title ->
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
+            }
         }
     }
 }

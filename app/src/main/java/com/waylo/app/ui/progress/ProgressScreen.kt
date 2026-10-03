@@ -1,5 +1,6 @@
 package com.waylo.app.ui.progress
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,20 +43,25 @@ import com.waylo.app.ui.theme.WayloTheme
 
 @Composable
 fun ProgressRoute(
+    onOpenAchievements: () -> Unit = {},
     viewModel: ProgressViewModel = viewModel(
         factory = ProgressViewModel.factory(
-            (LocalContext.current.applicationContext as WayloApplication).progressionRepository,
+            progression =
+                (LocalContext.current.applicationContext as WayloApplication).progressionRepository,
+            achievements =
+                (LocalContext.current.applicationContext as WayloApplication).achievementRepository,
         ),
     ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    ProgressScreen(state = state)
+    ProgressScreen(state = state, onOpenAchievements = onOpenAchievements)
 }
 
 @Composable
 fun ProgressScreen(
     state: ProgressUiState,
     modifier: Modifier = Modifier,
+    onOpenAchievements: () -> Unit = {},
 ) {
     val progress = state.progress
 
@@ -89,7 +95,11 @@ fun ProgressScreen(
             )
         }
         TotalsSection(progress)
-        AchievementsSection()
+        AchievementsSection(
+            unlockedCount = state.achievementsUnlocked,
+            totalCount = state.achievementsTotal,
+            onOpenAchievements = onOpenAchievements,
+        )
     }
 }
 
@@ -170,32 +180,48 @@ private fun TotalsSection(progress: UserProgress) {
 }
 
 @Composable
-private fun AchievementsSection() {
+private fun AchievementsSection(
+    unlockedCount: Int,
+    totalCount: Int,
+    onOpenAchievements: () -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing)) {
         WayloSectionHeader(title = "Achievements")
-        WayloCard {
+        WayloCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpenAchievements),
+        ) {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.EmojiEvents,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = WayloColors.Cyan,
                     modifier = Modifier.size(28.dp),
                 )
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
                     Text(
-                        text = "No achievements yet",
+                        text = "$unlockedCount / $totalCount unlocked",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     Text(
-                        text = "Start walking to unlock your first achievement.",
+                        text = "Milestones you've reached while walking.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                Text(
+                    text = "View all →",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = WayloColors.Cyan,
+                )
             }
         }
     }

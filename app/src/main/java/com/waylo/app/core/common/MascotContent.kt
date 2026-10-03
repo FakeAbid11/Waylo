@@ -14,7 +14,16 @@ object MascotContent {
 
             MascotState.Walking -> "You're moving!"
             MascotState.Paused -> "Take your time."
-            MascotState.Celebrating -> "Walk complete!"
+            MascotState.Celebrating -> when (decision.reaction) {
+                MascotReaction.AchievementUnlocked -> if (context.achievementCount > 1) {
+                    "${WayloFormat.count(context.achievementCount)} achievements unlocked!"
+                } else {
+                    "Achievement unlocked!"
+                }
+
+                else -> "Walk complete!"
+            }
+
             MascotState.XpEarned -> "Nice work! +${WayloFormat.count(context.xpAwarded)} XP"
             MascotState.LevelUp -> "Level up!"
             MascotState.Streak -> if (context.streakDays <= 1) {

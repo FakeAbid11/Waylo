@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.waylo.app.core.common.WorkoutStatisticsCalculator
 import com.waylo.app.core.util.WayloDateFormatter
+import com.waylo.app.data.achievement.AchievementRepository
 import com.waylo.app.data.map.WalkMapCameraPolicy
 import com.waylo.app.data.map.WalkMapState
 import com.waylo.app.data.progression.ProgressionRepository
@@ -24,6 +25,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import java.time.ZoneId
+
+/** Achievement unlocks presented on the finished-activity screen for this walk. */
+data class AchievementUnlockUi(
+    val titles: List<String>,
+) {
+    val count: Int
+        get() = titles.size
+
+    val isMultiple: Boolean
+        get() = titles.size > 1
+}
 
 sealed interface ActivityDetailUiState {
     data object Loading : ActivityDetailUiState
@@ -43,6 +55,7 @@ sealed interface ActivityDetailUiState {
         val endTimeLabel: String?,
         val xpAwarded: Int? = null,
         val levelUp: ProgressionAwardEvent? = null,
+        val achievementUnlock: AchievementUnlockUi? = null,
     ) : ActivityDetailUiState
 }
 
@@ -54,6 +67,7 @@ class ActivityDetailViewModel(
     private val networkStatus: Flow<Boolean> = flowOf(true),
     private val weightKg: Flow<Int?> = flowOf(null),
     private val progression: ProgressionRepository? = null,
+    private val achievements: AchievementRepository? = null,
     private val onDeleted: () -> Unit = {},
     stateScope: CoroutineScope? = null,
 ) : ViewModel() {
@@ -74,6 +88,7 @@ class ActivityDetailViewModel(
     private var weight: Int? = null
     private var xpAwarded: Int? = null
     private var levelUp: ProgressionAwardEvent? = null
+    private var achievementUnlock: AchievementUnlockUi? = null
     private var seenSession = false
     private var sessionFailed = false
     private var routeRequested = false
@@ -82,6 +97,7 @@ class ActivityDetailViewModel(
     init {
         observeSession()
         observeProgression()
+        observeAchievements()
         scope.launch {
             weightKg.collect { value ->
                 weight = value
@@ -147,6 +163,28 @@ class ActivityDetailViewModel(
             } catch (t: Throwable) {
                 sessionFailed = true
                 rebuild()
+            }
+        }
+    }
+
+    /**
+     * The Phase 10 unlock event is a single-consumption StateFlow: it is surfaced
+     * only when it belongs to this walk and consumed immediately, so repeated
+     * collection can never re-present the same celebration.
+     */
+    private fun observeAchievements() {
+        val repository = achievements ?: return
+        scope.launch {
+            repository.unlockEvent.collect { event ->
+                if (event != null && event.activityId == activityId) {
+                    achievementUnlock = AchievementUnlockUi(
+                        titles = event.unlocks.mapNotNull { unlock ->
+                            repository.definitions.firstOrNull { it.id == unlock.id }?.title
+                        },
+                    )
+                    rebuild()
+                    repository.consumeUnlockEvent()
+                }
             }
         }
     }
@@ -223,6 +261,7 @@ class ActivityDetailViewModel(
                 ?.let { WayloDateFormatter.timeOfDay(it, zone) },
             xpAwarded = xpAwarded,
             levelUp = levelUp,
+            achievementUnlock = achievementUnlock,
         )
     }
 
@@ -235,6 +274,7 @@ class ActivityDetailViewModel(
             networkStatus: Flow<Boolean> = flowOf(true),
             weightKg: Flow<Int?> = flowOf(null),
             progression: ProgressionRepository? = null,
+            achievements: AchievementRepository? = null,
             onDeleted: () -> Unit = {},
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
@@ -246,6 +286,7 @@ class ActivityDetailViewModel(
                     networkStatus = networkStatus,
                     weightKg = weightKg,
                     progression = progression,
+                    achievements = achievements,
                     onDeleted = onDeleted,
                 )
             }
