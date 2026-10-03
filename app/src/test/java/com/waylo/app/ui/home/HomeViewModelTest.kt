@@ -7,6 +7,7 @@ import com.waylo.app.domain.model.DailyStepState
 import com.waylo.app.domain.model.StepStatus
 import com.waylo.app.domain.model.WalkRoute
 import com.waylo.app.domain.model.WalkingState
+import com.waylo.app.domain.model.WalkingSession
 import com.waylo.app.domain.model.WalkingStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +46,8 @@ class HomeViewModelTest {
             stopCalls += 1
         }
 
+        override fun currentSensorCount(): Long? = _state.value.lastSensorCount
+
         override suspend fun setDailyGoal(goal: Long) {
             savedGoal = goal
         }
@@ -60,6 +63,7 @@ class HomeViewModelTest {
         private val _status = MutableStateFlow(initialState)
         override val status: StateFlow<WalkingStatus> = _status.asStateFlow()
         override val route: StateFlow<WalkRoute> = MutableStateFlow(WalkRoute()).asStateFlow()
+        override val lastCompletedSession: StateFlow<WalkingSession?> = MutableStateFlow(null)
 
         override fun startWalk() = Unit
         override fun pauseWalk() = Unit

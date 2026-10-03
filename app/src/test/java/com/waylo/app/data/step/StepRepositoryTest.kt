@@ -16,6 +16,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -263,6 +264,20 @@ class StepRepositoryTest {
 
         assertEquals(6_000L, repository.state.value.goal)
         assertEquals(6_000L, runBlocking { store.snapshot.first().goal })
+    }
+
+    @Test
+    fun rawSensorCountIsExposedForWalkStatistics() {
+        val repository = createRepository()
+        repository.start()
+        awaitLoaded(repository)
+
+        assertNull(repository.currentSensorCount())
+
+        sensor.emit(10_000L)
+
+        assertEquals(10_000L, repository.currentSensorCount())
+        assertEquals(10_000L, repository.state.value.lastSensorCount)
     }
 
     private fun createRepository(): StepRepositoryImpl = StepRepositoryImpl(

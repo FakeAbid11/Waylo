@@ -5,8 +5,10 @@ import com.waylo.app.data.map.MapCameraCommand
 import com.waylo.app.data.map.MapLatLng
 import com.waylo.app.data.map.WalkMapLoadState
 import com.waylo.app.data.walk.WalkingRepository
+import com.waylo.app.domain.model.DailyStepState
 import com.waylo.app.domain.model.WalkRoute
 import com.waylo.app.domain.model.WalkingLocationPoint
+import com.waylo.app.domain.model.WalkingSession
 import com.waylo.app.domain.model.WalkingState
 import com.waylo.app.domain.model.WalkingStatus
 import kotlinx.coroutines.CoroutineScope
@@ -20,6 +22,8 @@ import kotlinx.coroutines.flow.flowOf
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,6 +38,8 @@ class ActiveWalkViewModelTest {
 
         private val _route = MutableStateFlow(WalkRoute())
         override val route: StateFlow<WalkRoute> = _route.asStateFlow()
+
+        override val lastCompletedSession: StateFlow<WalkingSession?> = MutableStateFlow(null)
 
         var startCalls = 0
         var pauseCalls = 0
@@ -91,11 +97,15 @@ class ActiveWalkViewModelTest {
     private fun createViewModel(
         startService: () -> Unit = { serviceStarts += 1 },
         networkStatus: Flow<Boolean> = flowOf(true),
+        stepState: StateFlow<DailyStepState> = MutableStateFlow(DailyStepState()),
+        weightKg: Flow<Int?> = flowOf(null),
     ): ActiveWalkViewModel = ActiveWalkViewModel(
         repository = repository,
         startService = startService,
         now = { currentTime },
         networkStatus = networkStatus,
+        stepState = stepState,
+        weightKg = weightKg,
         stateScope = testScope,
     )
 
@@ -384,6 +394,112 @@ class ActiveWalkViewModelTest {
         assertEquals(command.id, again.id)
     }
 
+    @Test
+    fun statisticsFollowTheRecordedStatusWithoutGuessing() {
+        repository.emit(
+            WalkingStatus(
+                state = WalkingState.Active,
+                distanceMeters = 1_000.0,
+                activeMillis = 300_000L,
+            ),
+        )
+        val viewModel = createViewModel()
+
+        val statistics = viewModel.uiState.value.statistics
+        assertEquals(1_000.0, statistics.distanceMeters, 0.0)
+        assertEquals(300.0, statistics.averagePaceSecondsPerKm!!, 0.01)
+        assertEquals(1_000.0 / 300.0, statistics.averageSpeedMetersPerSecond!!, 0.001)
+        assertNull(statistics.currentPaceSecondsPerKm)
+        assertNull(statistics.currentSpeedMetersPerSecond)
+        assertNull(statistics.estimatedCaloriesKcal)
+        assertNull(statistics.walkSteps)
+    }
+
+    @Test
+    fun liveWalksShowCurrentStatsStepsAndCalorieEstimate() {
+        val viewModel = createViewModel(
+            stepState = MutableStateFlow(DailyStepState(lastSensorCount = 3_400L, isLoaded = true)),
+            weightKg = flowOf(70),
+        )
+        repository.emit(
+            WalkingStatus(
+                state = WalkingState.Active,
+                distanceMeters = 90.0,
+                activeMillis = 30_000L,
+                walkStartStepCount = 1_000L,
+            ),
+        )
+        repository.emitRoute(recentRoute())
+
+        val statistics = viewModel.uiState.value.statistics
+        assertNotNull(statistics.currentPaceSecondsPerKm)
+        assertNotNull(statistics.currentSpeedMetersPerSecond)
+        assertEquals(2_400L, statistics.walkSteps)
+        assertNotNull(statistics.estimatedCaloriesKcal)
+        assertEquals(70, viewModel.uiState.value.weightKg)
+    }
+
+    @Test
+    fun pausedWalksLoseCurrentStatsButKeepAverages() {
+        val viewModel = createViewModel()
+        repository.emitRoute(recentRoute())
+        repository.emit(
+            WalkingStatus(
+                state = WalkingState.Paused,
+                distanceMeters = 90.0,
+                activeMillis = 30_000L,
+            ),
+        )
+
+        val statistics = viewModel.uiState.value.statistics
+        assertNull(statistics.currentPaceSecondsPerKm)
+        assertNull(statistics.currentSpeedMetersPerSecond)
+        assertEquals(30_000.0 / 90.0, statistics.averagePaceSecondsPerKm!!, 0.01)
+        assertNotNull(statistics.averageSpeedMetersPerSecond)
+    }
+
+    @Test
+    fun completedWalksUseThePersistedFinalStepSnapshot() {
+        repository.emit(
+            WalkingStatus(
+                state = WalkingState.Completed,
+                distanceMeters = 1_500.0,
+                activeMillis = 600_000L,
+                walkStartStepCount = 1_000L,
+                walkStepCount = 1_260L,
+            ),
+        )
+        val viewModel = createViewModel(
+            stepState = MutableStateFlow(DailyStepState(lastSensorCount = 99_000L, isLoaded = true)),
+        )
+
+        val statistics = viewModel.uiState.value.statistics
+        assertEquals(1_260L, statistics.walkSteps)
+        assertEquals(400.0, statistics.averagePaceSecondsPerKm!!, 0.01)
+        assertNull(viewModel.uiState.value.weightKg)
+    }
+
+    private fun recentRoute(): WalkRoute = WalkRoute(
+        points = listOf(
+            recentPoint(0, metersNorth = 0.0, timestampMillis = currentTime - 30_000L),
+            recentPoint(1, metersNorth = 30.0, timestampMillis = currentTime - 20_000L),
+            recentPoint(2, metersNorth = 60.0, timestampMillis = currentTime - 10_000L),
+            recentPoint(3, metersNorth = 90.0, timestampMillis = currentTime),
+        ),
+    )
+
+    private fun recentPoint(
+        sequence: Int,
+        metersNorth: Double,
+        timestampMillis: Long,
+    ): WalkingLocationPoint = WalkingLocationPoint(
+        sessionId = 1L,
+        sequence = sequence,
+        latitude = 52.0 + metersNorth / METERS_PER_DEGREE,
+        longitude = 13.0,
+        timestampMillis = timestampMillis,
+    )
+
     private fun point(
         sequence: Int,
         latitude: Double,
@@ -395,4 +511,9 @@ class ActiveWalkViewModelTest {
         longitude = longitude,
         timestampMillis = 1_000L + sequence,
     )
+
+    private companion object {
+        const val EARTH_RADIUS_METERS = 6_371_000.0
+        const val METERS_PER_DEGREE = EARTH_RADIUS_METERS * Math.PI / 180.0
+    }
 }

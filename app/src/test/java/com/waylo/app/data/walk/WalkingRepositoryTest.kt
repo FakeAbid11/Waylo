@@ -12,6 +12,7 @@ import com.waylo.app.domain.model.WalkingStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.joinAll
@@ -20,6 +21,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -67,6 +69,7 @@ class WalkingRepositoryTest {
     private lateinit var repository: WalkingRepositoryImpl
     private var permission = PermissionState.Granted
     private var currentTime = T0
+    private var sensorCount: Long? = null
 
     @Before
     fun setUp() {
@@ -79,6 +82,7 @@ class WalkingRepositoryTest {
         location = FakeLocationDataSource()
         permission = PermissionState.Granted
         currentTime = T0
+        sensorCount = null
         repository = createRepository()
     }
 
@@ -284,12 +288,16 @@ class WalkingRepositoryTest {
 
         repository.startWalk()
         awaitStatus(repository) { it.state == WalkingState.Active }
+        allowCollectorToCatchUp()
         repository.pauseWalk()
         awaitStatus(repository) { it.state == WalkingState.Paused }
+        allowCollectorToCatchUp()
         repository.resumeWalk()
         awaitStatus(repository) { it.state == WalkingState.Active }
+        allowCollectorToCatchUp()
         repository.stopWalk()
         awaitStatus(repository) { it.state == WalkingState.Completed }
+        allowCollectorToCatchUp()
         collector.cancel()
 
         assertEquals(
@@ -585,12 +593,166 @@ class WalkingRepositoryTest {
         assertEquals(2, recovered.route.value.points.size)
     }
 
+    @Test
+    fun startWalkCapturesTheSensorBaseline() {
+        sensorCount = 5_000L
+
+        repository.startWalk()
+        val status = awaitStatus(repository) { it.state == WalkingState.Active }
+        settle()
+
+        assertEquals(5_000L, status.walkStartStepCount)
+    }
+
+    @Test
+    fun stopWalkSnapshotsStepsAsTheSensorDelta() {
+        sensorCount = 5_000L
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        settle()
+
+        sensorCount = 7_800L
+        repository.stopWalk()
+        val status = awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+
+        assertEquals(2_800L, status.walkStepCount)
+        val row = runBlocking { database.walkingDao().sessionById(status.sessionId!!) }
+        assertEquals(5_000L, row?.walkStartStepCount)
+        assertEquals(2_800L, row?.walkStepCount)
+    }
+
+    @Test
+    fun stopWalkLeavesStepsUnavailableWithoutSensorCounts() {
+        sensorCount = null
+
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        settle()
+
+        repository.stopWalk()
+        val status = awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+
+        assertNull(status.walkStartStepCount)
+        assertNull(status.walkStepCount)
+    }
+
+    @Test
+    fun stopWalkNeverReportsNegativeStepsAfterACounterReset() {
+        sensorCount = 5_000L
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        settle()
+
+        sensorCount = 300L
+        repository.stopWalk()
+        val status = awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+
+        assertEquals(5_000L, status.walkStartStepCount)
+        assertNull(status.walkStepCount)
+    }
+
+    @Test
+    fun zeroSensorCountAtStartIsTreatedAsAnUnknownBaseline() {
+        sensorCount = 0L
+
+        repository.startWalk()
+        val active = awaitStatus(repository) { it.state == WalkingState.Active }
+        settle()
+
+        assertNull(active.walkStartStepCount)
+
+        sensorCount = 100L
+        repository.stopWalk()
+        val status = awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+
+        assertNull(status.walkStepCount)
+    }
+
+    @Test
+    fun lastCompletedSessionExposesTheFinishedWalk() {
+        sensorCount = 1_000L
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        settle()
+
+        sensorCount = 1_650L
+        repository.stopWalk()
+        awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+
+        val completed = repository.lastCompletedSession.value
+        assertNotNull(completed)
+        assertEquals(WalkingState.Completed, completed!!.state)
+        assertEquals(1_000L, completed.walkStartStepCount)
+        assertEquals(650L, completed.walkStepCount)
+    }
+
+    @Test
+    fun lastCompletedSessionRestoredFromPersistedHistory() {
+        val id = runBlocking {
+            database.walkingDao().insertSession(
+                WalkingSessionEntity(
+                    state = WalkingState.Completed.name,
+                    startMillis = 1_000L,
+                    updatedMillis = 2_000L,
+                    distanceMeters = 1_200.0,
+                    activeMillis = 900_000L,
+                    pausedMillis = 0L,
+                    activeSegmentStartMillis = null,
+                    pausedSegmentStartMillis = null,
+                    startLatitude = 52.0,
+                    startLongitude = 13.0,
+                    lastLatitude = 52.01,
+                    lastLongitude = 13.0,
+                    errorMessage = null,
+                    walkStartStepCount = 4_000L,
+                    walkStepCount = 2_800L,
+                ),
+            )
+        }
+
+        val fresh = createRepository()
+        val restored = runBlocking {
+            withTimeout(15_000) { fresh.lastCompletedSession.first { it != null }!! }
+        }
+
+        assertEquals(id, restored.id)
+        assertEquals(2_800L, restored.walkStepCount)
+    }
+
+    @Test
+    fun recoveredWalkFinalizesStepsFromThePersistedBaseline() {
+        sensorCount = 5_000L
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        settle()
+
+        killScope()
+        sensorCount = 6_500L
+        repository = createRepository()
+
+        val recovered = awaitStatus(repository) { it.state == WalkingState.Active }
+        settle()
+        assertEquals(5_000L, recovered.walkStartStepCount)
+
+        repository.stopWalk()
+        val status = awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+
+        assertEquals(1_500L, status.walkStepCount)
+    }
+
     private fun createRepository(): WalkingRepositoryImpl = WalkingRepositoryImpl(
         locationDataSource = location,
         dao = database.walkingDao(),
         permissionState = { permission },
         now = { currentTime },
         measureDistance = { from, to -> flatDistance(from, to) },
+        stepCountNow = { sensorCount },
         scope = testScope,
     )
 
@@ -619,6 +781,15 @@ class WalkingRepositoryTest {
         withTimeout(15_000) {
             testScope.coroutineContext.job.children.toList().joinAll()
         }
+    }
+
+    /**
+     * StateFlow conflates while slow collectors are queued, so drain the Unconfined event
+     * loop between asserting a state and triggering the next transition. This keeps the
+     * history assertion deterministic instead of racing the collector.
+     */
+    private fun allowCollectorToCatchUp() = runBlocking {
+        withTimeout(15_000) { delay(25) }
     }
 
     private fun CoroutineScope.launchCollector(

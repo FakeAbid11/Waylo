@@ -10,7 +10,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -49,6 +51,19 @@ class WayloPreferencesTest {
 
         val relaunch = createPreferences(file)
         assertTrue(relaunch.onboardingCompleted.first())
+    }
+
+    @Test
+    fun weightIsOptionalRemovableAndPersisted() = runBlocking {
+        val preferences = createPreferences()
+
+        assertNull(preferences.weightKg.first())
+
+        preferences.setWeightKg(72)
+        assertEquals(72, preferences.weightKg.first())
+
+        preferences.setWeightKg(null)
+        assertNull(preferences.weightKg.first())
     }
 
     private fun preferencesFile(): File = File(
