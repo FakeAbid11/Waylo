@@ -4,17 +4,20 @@ Waylo is a walking-focused Android application that turns everyday walking into 
 step tracking, GPS walks, XP, levels, streaks, achievements, a fox mascot, and a virtual
 exploration journey.
 
-**Current implementation phase: Phase 4 — GPS walking engine.**
+**Current implementation phase: Phase 5 — MapLibre map with live walking route.**
 
 Phase 1 (foundation, architecture, design system), Phase 2 (onboarding + permissions),
-Phase 3 (step tracking) and Phase 4 are implemented: a six-step onboarding flow (welcome,
+Phase 3 (step tracking), Phase 4 (GPS walking engine) and Phase 5 are implemented: a
+six-step onboarding flow (welcome,
 concepts, companion, permission explanations, permission requests, ready), DataStore-persisted
 onboarding completion, a permission architecture with `ACTIVITY_RECOGNITION` (API 29+) and
 `POST_NOTIFICATIONS` (API 33+) support, hardware step tracking based on
 `Sensor.TYPE_STEP_COUNTER` with a baseline/rollover calculation, an honest unsupported-device
 state, a user-configurable daily step goal (default 6,000; range 1,000–100,000) edited from
-the Profile screen, and a GPS walking engine with foreground tracking, pause/resume, filtered
-distance, and Room-persisted sessions. Maps, XP/streak/achievement logic, and any cloud
+the Profile screen, a GPS walking engine with foreground tracking, pause/resume, filtered
+distance, and Room-persisted sessions, plus an online MapLibre map on the Active Walk screen
+with a live route polyline, current-position marker, camera follow/recenter and honest
+loading/offline/style-error states. Offline maps, XP/streak/achievement logic, and any cloud
 features are intentionally *not* implemented yet; those screens show honest zero/empty
 placeholder states.
 
@@ -27,6 +30,8 @@ placeholder states.
 - DataStore Preferences (onboarding state, daily step goal + step baseline)
 - Android sensor APIs (`TYPE_STEP_COUNTER`)
 - Android location APIs (`LocationManager`, `Location.distanceBetween`)
+- MapLibre Native for Android (`org.maplibre.gl:android-sdk-opengl:13.6.1`)
+- OpenFreeMap public vector tiles (token-free, online only)
 - Foreground service (location type) for background walk tracking
 - Kotlin Coroutines / StateFlow
 - JUnit 4 + Robolectric (unit tests)
@@ -43,6 +48,7 @@ app/src/main/java/com/waylo/app
 ├── core/util            formatting helpers (distance, duration, counts)
 ├── data/local           Room database (settings + walking sessions + route points)
 ├── data/location        LocationDataSource (LocationManager) + framework distance
+├── data/map             MapLibre style config, route GeoJSON, map/camera state policy
 ├── data/preferences     DataStore-backed WayloPreferences (onboarding state)
 ├── data/step            step sensor, step state store, StepRepository
 ├── data/walk            WalkingRepository (walk state machine + persistence)
@@ -58,7 +64,7 @@ app/src/main/java/com/waylo/app
 │   ├── profile/         Profile screen + permissions + daily goal editor
 │   ├── progress/        Progress screen + ProgressViewModel
 │   ├── theme/           colors, typography, shapes, gradients, dimensions
-│   └── walk/            ActiveWalkScreen + ActiveWalkViewModel (live walk UI)
+│   └── walk/            ActiveWalkScreen + ActiveWalkViewModel + WalkMap (live walk UI)
 └── ui/WayloApp.kt       startup decision + Scaffold + bottom navigation
 ```
 
@@ -91,11 +97,15 @@ stale readings, counter resets, daily rollover), daily goal validation, step-sta
 mapping, step-state DataStore persistence across restarts, `StepRepository` behaviour with a
 fake sensor (permission gating, missing sensor, rollover, persistence throttling, goal
 updates), HomeViewModel state mirroring plus walk-state labels, the GPS filtering engine
-(accuracy/timestamp/speed rejection, anchor rules), `ActiveWalkViewModel` readiness and entry
-behaviour, `WalkingRepository` state transitions with a fake location source (start/pause/
-resume/stop, distance accumulation, duration folding, process-death recovery, error paths),
-`FrameworkDistance` under Robolectric, and the Room 1 → 2 schema migration against a
-hand-built v1 database.
+(accuracy/timestamp/speed rejection, anchor rules), `ActiveWalkViewModel` readiness, entry
+behaviour and map state (style lifecycle, offline transitions, camera follow/pan/recenter,
+completion fitting), `WalkingRepository` state transitions with a fake location source
+(start/pause/resume/stop, distance accumulation, duration folding, process-death recovery,
+error paths) plus its live `route` flow (append/pause segments/dismiss/DB restore),
+`WalkRoute` segments and bounds, exact route/marker GeoJSON rendering (including pause
+splitting), `WalkMapCameraPolicy` (load-state machine, follow thresholds, recenter, fitting
+the finished route), `FrameworkDistance` under Robolectric, and the Room 1 → 2 schema
+migration against a hand-built v1 database.
 
 ## GitHub Actions
 
@@ -159,7 +169,58 @@ Failing compilation or failing unit tests fail the workflow.
   requested during onboarding — they are requested in context, on the Active Walk screen.
 - UI: start/pause/resume, a stop confirmation ("Finish this walk?" / "Your recorded distance
   will be saved."), a completion summary (distance + duration), and error states with a
-  retry. No map, no route drawing, no pace/speed/calories (later phases).
+  retry. No pace/speed/calories (later phases); the map overlay is described in Phase 5 below.
+
+## Map and live route (Phase 5)
+
+- Library: MapLibre Native for Android, `org.maplibre.gl:android-sdk-opengl:13.6.1` from
+  Maven Central, hosted in `AndroidView`/`MapView`. The explicit **OpenGL** build is chosen
+  over the default `android-sdk` package because MapLibre 11+ switched that package to the
+  Vulkan backend as a breaking change; the OpenGL backend has the widest device support on
+  minSdk 26 and needs no experimental/pre-1.0 library. The official
+  `org.maplibre.compose` artifact was skipped because it is still pre-1.0 and aimed at
+  Compose Multiplatform. No API key is required (`MapLibre.getInstance(context)`).
+- Style/tiles: the OpenFreeMap public style
+  `https://tiles.openfreemap.org/styles/dark` (dark, matching Waylo's theme). OpenFreeMap is
+  donation funded, needs no key/registration and documents no request limits; OSM and
+  OpenMapTiles attribution is rendered by the MapLibre UI automatically. The map is
+  **online only** — Waylo never caches tiles to disk (offline maps are a later phase), so
+  offline the map area shows an honest "Map unavailable while offline. Your walk is still
+  being recorded." message while GPS tracking continues unaffected.
+- Data flow: `WalkingForegroundService → WalkingRepository → persisted route points →
+  ActiveWalkViewModel → ActiveWalkUiState → WalkMap`. The repository exposes a new
+  `route: StateFlow<WalkRoute>` fed only by GPS-accepted points (same engine and filters as
+  Phase 4 — no second location source); `WalkRoute` also tracks pause breaks so the polyline
+  renders as a MultiLineString and never draws a fake straight line across a pause.
+- Rendering: a GeoJSON source (`lineMetrics: true`) feeds a `LineLayer` with a
+  cyan → blue → violet `lineGradient` (`#22D3EE → #3B82F6 → #8B5CF6`, Waylo's palette), plus
+  a circle layer for the current-position marker drawn above the line. Route updates only
+  call `setGeoJson` on the existing source — the map and layers are created once per style
+  load. No marker or camera move is fabricated without a real GPS fix.
+- Camera: follow mode is on at walk start, recenters on the first fix and thereafter only
+  when the position moved ≥ 8 m (no per-update animation churn); manually panning the map
+  stops following, the recenter button (disabled with an explanatory content description
+  until a fix exists) re-centers and re-enables it, and finishing a walk fits the full route
+  bounds with padding (single point → center at zoom 16). The policy is a pure,
+  unit-tested object (`WalkMapCameraPolicy`).
+- Map states: `Loading` (initial), `Ready`, `Unavailable` (no network — auto-recovers and
+  retries the style when the connection returns) and `StyleError` (style failed while
+  online, with a Retry button), driven by `ConnectivityManager` callbacks
+  (`ACCESS_NETWORK_STATE`, new normal permission) and MapLibre load listeners. `INTERNET`
+  was added to the manifest (the app previously had no network permission at all).
+- UI: the map is the main visual area of the Active Walk screen; status/duration/distance
+  sit in a compact overlay card, pause/resume/stop and the recenter button stay reachable at
+  the bottom, and readiness/error/completion panels render as cards over the map with the
+  fitted route still visible on the completion screen.
+- Limitation (honest): pause-break markers live in memory only — after a process death the
+  restored route replays as a single continuous line from the persisted points; distance and
+  time accounting are unaffected.
+- Tests (214 total, 40 added): `WalkRouteTest` (segments/bounds/breaks),
+  `MapRoutePresentationTest` (exact GeoJSON, pause splitting, empty states),
+  `WalkMapCameraPolicyTest` (load-state machine, follow/pan/recenter thresholds, completion
+  fits), repository route tests (append/pause segments/dismiss/process-death restore/error
+  restore) and ViewModel map tests (style lifecycle, network transitions, camera commands,
+  completion fits exactly once).
 
 ## Design system
 
