@@ -4,7 +4,11 @@ import com.waylo.app.core.common.WorkoutStatisticsCalculator
 import com.waylo.app.data.map.MapCameraCommand
 import com.waylo.app.data.map.WalkMapCameraPolicy
 import com.waylo.app.data.map.WalkMapLoadState
+import com.waylo.app.data.progression.ProgressionRepository
 import com.waylo.app.data.walk.WalkingRepository
+import com.waylo.app.domain.model.ProgressionAwardEvent
+import com.waylo.app.domain.model.ProgressionResult
+import com.waylo.app.domain.model.UserProgress
 import com.waylo.app.domain.model.WalkRoute
 import com.waylo.app.domain.model.WalkingLocationPoint
 import com.waylo.app.domain.model.WalkingSession
@@ -17,6 +21,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
@@ -24,6 +29,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -31,6 +37,32 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 
 class ActivityDetailViewModelTest {
+
+    private class FakeProgressionRepository : ProgressionRepository {
+        val awardXp = MutableStateFlow<Int?>(null)
+        val _awardEvent = MutableStateFlow<ProgressionAwardEvent?>(null)
+        var consumeCalls = 0
+
+        override val progress: Flow<UserProgress> = flowOf(UserProgress.empty())
+        override val awardEvent: StateFlow<ProgressionAwardEvent?> = _awardEvent.asStateFlow()
+
+        override suspend fun awardActivityXp(activityId: Long): ProgressionResult =
+            error("not used by ActivityDetailViewModel")
+
+        override suspend fun recoverAwardIfNeeded(activityId: Long, sessionUpdatedMillis: Long) = Unit
+
+        override fun observeAwardXp(activityId: Long): Flow<Int?> = awardXp
+
+        override suspend fun deleteActivityCascade(
+            activityId: Long,
+            deleteWalkData: suspend () -> Boolean,
+        ): Boolean = deleteWalkData()
+
+        override fun consumeAwardEvent() {
+            consumeCalls += 1
+            _awardEvent.value = null
+        }
+    }
 
     private class FakeWalkingRepository : WalkingRepository {
         val sessionFlow = MutableStateFlow<WalkingSession?>(null)
@@ -305,6 +337,69 @@ class ActivityDetailViewModelTest {
         assertEquals(WalkMapLoadState.Ready, loaded(mapState(viewModel)))
     }
 
+    @Test
+    fun withoutProgressionTheXpFieldsStayEmpty() {
+        repository.sessionFlow.value = completedSession
+
+        val loaded = awaitLoaded(createViewModel())
+
+        assertNull(loaded.xpAwarded)
+        assertNull(loaded.levelUp)
+    }
+
+    @Test
+    fun earnedXpIsShownWhenTheLedgerHasAnAwardForThisWalk() {
+        repository.sessionFlow.value = completedSession
+        val progression = FakeProgressionRepository()
+        progression.awardXp.value = 150
+
+        val loaded = awaitLoaded(createViewModel(progression = progression))
+
+        assertEquals(150, loaded.xpAwarded)
+    }
+
+    @Test
+    fun aLevelUpForThisWalkIsSurfacedOnceAndConsumed() {
+        repository.sessionFlow.value = completedSession
+        val progression = FakeProgressionRepository()
+        progression.awardXp.value = 150
+        progression._awardEvent.value = ProgressionAwardEvent(
+            activityId = 7L,
+            xpAwarded = 150,
+            totalXp = 150,
+            levelBefore = 1,
+            levelAfter = 2,
+        )
+
+        val loaded = awaitLoaded(createViewModel(progression = progression))
+
+        assertNotNull(loaded.levelUp)
+        assertEquals(1, loaded.levelUp!!.levelBefore)
+        assertEquals(2, loaded.levelUp!!.levelAfter)
+        assertEquals(150, loaded.levelUp!!.xpAwarded)
+        assertEquals(1, progression.consumeCalls)
+        assertNull(progression._awardEvent.value)
+    }
+
+    @Test
+    fun aLevelUpForAnotherWalkIsIgnoredAndLeftUnconsumed() {
+        repository.sessionFlow.value = completedSession
+        val progression = FakeProgressionRepository()
+        progression._awardEvent.value = ProgressionAwardEvent(
+            activityId = 99L,
+            xpAwarded = 40,
+            totalXp = 40,
+            levelBefore = 1,
+            levelAfter = 1,
+        )
+
+        val loaded = awaitLoaded(createViewModel(progression = progression))
+
+        assertNull(loaded.levelUp)
+        assertEquals(0, progression.consumeCalls)
+        assertNotNull(progression._awardEvent.value)
+    }
+
     private fun loaded(state: ActivityDetailUiState): WalkMapLoadState =
         (state as ActivityDetailUiState.Loaded).map.loadState
 
@@ -314,6 +409,7 @@ class ActivityDetailViewModelTest {
     private fun createViewModel(
         networkStatus: Flow<Boolean> = flowOf(true),
         weightKg: Flow<Int?> = flowOf(null),
+        progression: ProgressionRepository? = null,
     ): ActivityDetailViewModel = ActivityDetailViewModel(
         repository = repository,
         activityId = 7L,
@@ -321,6 +417,7 @@ class ActivityDetailViewModelTest {
         zoneId = { utc },
         networkStatus = networkStatus,
         weightKg = weightKg,
+        progression = progression,
         onDeleted = { deletedCalls += 1 },
         stateScope = testScope,
     )

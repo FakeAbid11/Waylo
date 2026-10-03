@@ -1,10 +1,14 @@
 package com.waylo.app.ui.home
 
 import com.waylo.app.core.permissions.PermissionState
+import com.waylo.app.data.progression.ProgressionRepository
 import com.waylo.app.data.step.StepRepository
 import com.waylo.app.data.walk.WalkingRepository
 import com.waylo.app.domain.model.DailyStepState
+import com.waylo.app.domain.model.ProgressionAwardEvent
+import com.waylo.app.domain.model.ProgressionResult
 import com.waylo.app.domain.model.StepStatus
+import com.waylo.app.domain.model.UserProgress
 import com.waylo.app.domain.model.WalkRoute
 import com.waylo.app.domain.model.WalkingState
 import com.waylo.app.domain.model.WalkingSession
@@ -24,6 +28,36 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HomeViewModelTest {
+
+    private class FakeProgressionRepository(
+        initial: UserProgress = UserProgress.empty(),
+    ) : ProgressionRepository {
+        private val _progress = MutableStateFlow(initial)
+        private val _awardEvent = MutableStateFlow<ProgressionAwardEvent?>(null)
+
+        override val progress: Flow<UserProgress> = _progress.asStateFlow()
+        override val awardEvent: StateFlow<ProgressionAwardEvent?> = _awardEvent.asStateFlow()
+
+        override suspend fun awardActivityXp(activityId: Long): ProgressionResult =
+            error("not used by HomeViewModel")
+
+        override suspend fun recoverAwardIfNeeded(activityId: Long, sessionUpdatedMillis: Long) = Unit
+
+        override fun observeAwardXp(activityId: Long): Flow<Int?> = flowOf(null)
+
+        override suspend fun deleteActivityCascade(
+            activityId: Long,
+            deleteWalkData: suspend () -> Boolean,
+        ): Boolean = deleteWalkData()
+
+        override fun consumeAwardEvent() {
+            _awardEvent.value = null
+        }
+
+        fun emit(progress: UserProgress) {
+            _progress.value = progress
+        }
+    }
 
     private class FakeStepRepository(
         initialState: DailyStepState = DailyStepState(),
@@ -178,5 +212,59 @@ class HomeViewModelTest {
         viewModel.refresh()
 
         assertEquals(1, repository.refreshCalls)
+    }
+
+    @Test
+    fun uiStateExposesPersistedProgressionTotals() {
+        val progression = FakeProgressionRepository(
+            UserProgress(
+                level = 2,
+                totalXp = 150,
+                xp = 50,
+                xpToNextLevel = 400,
+                currentStreakDays = 1,
+                longestStreakDays = 3,
+                totalSteps = 2_000,
+                totalDistanceKm = 1.5,
+                totalWalkingMinutes = 10,
+            ),
+        )
+        val home = HomeViewModel(repository, walkingRepository, testScope, progression)
+
+        val state = home.uiState.value
+
+        assertEquals(2, state.progress.level)
+        assertEquals(150, state.progress.totalXp)
+        assertEquals(50, state.progress.xp)
+        assertEquals(400, state.progress.xpToNextLevel)
+        assertEquals(1, state.progress.currentStreakDays)
+        assertEquals(3, state.progress.longestStreakDays)
+    }
+
+    @Test
+    fun uiStateTracksProgressionChangesAfterCreation() {
+        val progression = FakeProgressionRepository()
+        val home = HomeViewModel(repository, walkingRepository, testScope, progression)
+
+        assertEquals(1, home.uiState.value.progress.level)
+
+        progression.emit(
+            UserProgress(
+                level = 2,
+                totalXp = 150,
+                xp = 50,
+                xpToNextLevel = 400,
+                currentStreakDays = 1,
+                longestStreakDays = 1,
+                totalSteps = 2_000,
+                totalDistanceKm = 1.5,
+                totalWalkingMinutes = 10,
+            ),
+        )
+
+        val state = home.uiState.value
+        assertEquals(2, state.progress.level)
+        assertEquals(150, state.progress.totalXp)
+        assertEquals(1, state.progress.currentStreakDays)
     }
 }

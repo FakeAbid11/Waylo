@@ -5,6 +5,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import com.waylo.app.domain.model.WalkingState
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -41,7 +42,11 @@ class WayloDatabaseMigrationTest {
             context,
             WayloDatabase::class.java,
             databaseName,
-        ).addMigrations(WayloDatabase.MIGRATION_1_2, WayloDatabase.MIGRATION_2_3).build()
+        ).addMigrations(
+            WayloDatabase.MIGRATION_1_2,
+            WayloDatabase.MIGRATION_2_3,
+            WayloDatabase.MIGRATION_3_4,
+        ).build()
 
         try {
             runBlocking {
@@ -100,14 +105,22 @@ class WayloDatabaseMigrationTest {
             context,
             WayloDatabase::class.java,
             databaseName,
-        ).addMigrations(WayloDatabase.MIGRATION_1_2, WayloDatabase.MIGRATION_2_3).build()
+        ).addMigrations(
+            WayloDatabase.MIGRATION_1_2,
+            WayloDatabase.MIGRATION_2_3,
+            WayloDatabase.MIGRATION_3_4,
+        ).build()
         first.close()
 
         val second = Room.databaseBuilder(
             context,
             WayloDatabase::class.java,
             databaseName,
-        ).addMigrations(WayloDatabase.MIGRATION_1_2, WayloDatabase.MIGRATION_2_3).build()
+        ).addMigrations(
+            WayloDatabase.MIGRATION_1_2,
+            WayloDatabase.MIGRATION_2_3,
+            WayloDatabase.MIGRATION_3_4,
+        ).build()
 
         try {
             runBlocking {
@@ -126,7 +139,11 @@ class WayloDatabaseMigrationTest {
             context,
             WayloDatabase::class.java,
             databaseName,
-        ).addMigrations(WayloDatabase.MIGRATION_1_2, WayloDatabase.MIGRATION_2_3).build()
+        ).addMigrations(
+            WayloDatabase.MIGRATION_1_2,
+            WayloDatabase.MIGRATION_2_3,
+            WayloDatabase.MIGRATION_3_4,
+        ).build()
 
         try {
             runBlocking {
@@ -164,6 +181,62 @@ class WayloDatabaseMigrationTest {
                 assertNotNull(inserted)
                 assertEquals(9_000L, inserted!!.walkStartStepCount)
                 assertEquals(1_500L, inserted.walkStepCount)
+            }
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun migrationFrom3To4AddsProgressionWithoutAwardingHistoricalWalks() {
+        createVersion3Database()
+
+        val database = Room.databaseBuilder(
+            context,
+            WayloDatabase::class.java,
+            databaseName,
+        ).addMigrations(
+            WayloDatabase.MIGRATION_1_2,
+            WayloDatabase.MIGRATION_2_3,
+            WayloDatabase.MIGRATION_3_4,
+        ).build()
+
+        try {
+            runBlocking {
+                assertEquals("dark", database.settingsDao().getValue("appearance"))
+
+                val history = database.walkingDao().observeCompletedSessions().first()
+                assertEquals(1, history.size)
+                assertEquals(1_500.0, history[0].distanceMeters, 0.0)
+                assertEquals(9_000L, history[0].walkStartStepCount)
+                assertEquals(2_000L, history[0].walkStepCount)
+
+                assertEquals(0, database.progressionDao().awardCount())
+                assertEquals(0, database.progressionDao().totalXp())
+
+                val progression = database.progressionDao()
+                    .progressionById(ProgressionEntity.SINGLE_ROW_ID)
+                assertNotNull(progression)
+                assertEquals(0, progression!!.totalXp)
+                assertEquals(0, progression.currentStreakDays)
+                assertEquals(0, progression.longestStreakDays)
+                assertTrue(progression.createdAtMillis > 0L)
+
+                val totals = database.progressionDao().completedTotals()
+                assertEquals(2_000L, totals.steps)
+                assertEquals(1_500.0, totals.distanceMeters, 0.001)
+                assertEquals(900_000L, totals.activeMillis)
+
+                val awarded = database.progressionDao().insertAward(
+                    XpAwardEntity(activityId = history[0].id, xp = 150, awardedAt = 1L),
+                )
+                assertTrue(awarded > 0L)
+                val conflicted = database.progressionDao().insertAward(
+                    XpAwardEntity(activityId = history[0].id, xp = 999, awardedAt = 2L),
+                )
+                assertEquals(-1L, conflicted)
+                assertEquals(1, database.progressionDao().awardCount())
+                assertEquals(150, database.progressionDao().totalXp())
             }
         } finally {
             database.close()
@@ -210,6 +283,57 @@ class WayloDatabaseMigrationTest {
                     52.001,
                     13.0,
                     "",
+                ),
+            )
+        } finally {
+            db.close()
+            helper.close()
+        }
+    }
+
+    private fun createVersion3Database() {
+        createVersion2Database()
+
+        val configuration = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name(databaseName)
+            .callback(object : SupportSQLiteOpenHelper.Callback(3) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+
+                override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
+                    WayloDatabase.MIGRATION_2_3.migrate(db)
+                }
+
+                override fun onDowngrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+            })
+            .build()
+
+        val helper = FrameworkSQLiteOpenHelperFactory().create(configuration)
+        val db = helper.writableDatabase
+        try {
+            db.execSQL(
+                "INSERT INTO `walking_sessions` (" +
+                    "`state`, `startMillis`, `updatedMillis`, `distanceMeters`, " +
+                    "`activeMillis`, `pausedMillis`, `activeSegmentStartMillis`, " +
+                    "`pausedSegmentStartMillis`, `startLatitude`, `startLongitude`, " +
+                    "`lastLatitude`, `lastLongitude`, `errorMessage`, " +
+                    "`walkStartStepCount`, `walkStepCount`) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                arrayOf<Any>(
+                    WalkingState.Completed.name,
+                    5_000L,
+                    6_000L,
+                    1_500.0,
+                    900_000L,
+                    0L,
+                    0L,
+                    0L,
+                    52.0,
+                    13.0,
+                    52.02,
+                    13.02,
+                    "",
+                    9_000L,
+                    2_000L,
                 ),
             )
         } finally {

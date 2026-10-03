@@ -10,6 +10,7 @@ class UserProgressTest {
         val progress = UserProgress.empty()
 
         assertEquals(1, progress.level)
+        assertEquals(0, progress.totalXp)
         assertEquals(0, progress.xp)
         assertEquals(100, progress.xpToNextLevel)
         assertEquals(0f, progress.xpProgress, 0f)

@@ -1,15 +1,18 @@
 package com.waylo.app.data.walk
 
 import androidx.room.Room
+import com.waylo.app.core.common.XpCalculator
 import com.waylo.app.core.permissions.PermissionState
 import com.waylo.app.data.local.WayloDatabase
 import com.waylo.app.data.local.WalkingLocationPointEntity
 import com.waylo.app.data.local.WalkingSessionEntity
 import com.waylo.app.data.location.LocationDataSource
+import com.waylo.app.data.progression.ProgressionRepositoryImpl
 import com.waylo.app.domain.model.LocationSample
 import com.waylo.app.domain.model.WalkRoute
 import com.waylo.app.domain.model.WalkingState
 import com.waylo.app.domain.model.WalkingStatus
+import java.time.ZoneOffset
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
@@ -69,6 +72,7 @@ class WalkingRepositoryTest {
     private lateinit var testScope: CoroutineScope
     private lateinit var location: FakeLocationDataSource
     private lateinit var repository: WalkingRepositoryImpl
+    private lateinit var progression: ProgressionRepositoryImpl
     private var permission = PermissionState.Granted
     private var currentTime = T0
     private var sensorCount: Long? = null
@@ -85,6 +89,7 @@ class WalkingRepositoryTest {
         permission = PermissionState.Granted
         currentTime = T0
         sensorCount = null
+        progression = createProgression()
         repository = createRepository()
     }
 
@@ -372,6 +377,129 @@ class WalkingRepositoryTest {
         val row = runBlocking { database.walkingDao().latestSession() }
         assertEquals("Completed", row?.state)
         assertEquals(111.19, row!!.distanceMeters, 0.01)
+    }
+
+    @Test
+    fun completingAQualifyingWalkAwardsXpExactlyOnceAndSurvivesRestart() {
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        location.emit(sample(latitude = 52.0, timestampMillis = T0))
+        awaitStatus(repository) { it.hasFix }
+        currentTime = T0 + 60_000L
+        location.emit(sample(latitude = 52.001, timestampMillis = T0 + 60_000L))
+        awaitStatus(repository) { it.distanceMeters > 100.0 }
+        repository.stopWalk()
+        val completed = awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+
+        val id = completed.sessionId!!
+        val award = runBlocking { database.progressionDao().awardForActivity(id) }
+        assertNotNull(award)
+        assertEquals(
+            XpCalculator.xpFor(completed.distanceMeters),
+            award!!.xp,
+        )
+        assertTrue(award.xp > 0)
+        assertEquals(1, runBlocking { database.progressionDao().awardCount() })
+        assertEquals(award.xp, runBlocking { database.progressionDao().totalXp() })
+        assertNotNull(progression.awardEvent.value)
+        assertEquals(id, progression.awardEvent.value!!.activityId)
+
+        killScope()
+        progression = createProgression()
+        repository = createRepository()
+        settle()
+
+        assertEquals(1, runBlocking { database.progressionDao().awardCount() })
+        assertEquals(award.xp, runBlocking { database.progressionDao().totalXp() })
+        assertNull(progression.awardEvent.value)
+    }
+
+    @Test
+    fun completingATooShortWalkNeverTouchesTheProgressionLedger() {
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        repository.stopWalk()
+        awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+
+        assertEquals(0, runBlocking { database.progressionDao().awardCount() })
+        assertEquals(0, runBlocking { database.progressionDao().totalXp() })
+        assertNull(progression.awardEvent.value)
+    }
+
+    @Test
+    fun anActiveWalkNeverAwardsXp() {
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        settle()
+
+        assertEquals(0, runBlocking { database.progressionDao().awardCount() })
+        assertNull(progression.awardEvent.value)
+    }
+
+    @Test
+    fun deletingACompletedWalkRemovesItsXpAwardAndResetsProgression() {
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        location.emit(sample(latitude = 52.0, timestampMillis = T0))
+        awaitStatus(repository) { it.hasFix }
+        currentTime = T0 + 60_000L
+        location.emit(sample(latitude = 52.001, timestampMillis = T0 + 60_000L))
+        awaitStatus(repository) { it.distanceMeters > 100.0 }
+        repository.stopWalk()
+        val completed = awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+
+        val id = completed.sessionId!!
+        assertEquals(1, runBlocking { database.progressionDao().awardCount() })
+
+        val removed = runBlocking {
+            progression.deleteActivityCascade(id) { database.walkingDao().deleteActivity(id) }
+        }
+
+        assertTrue(removed)
+        assertEquals(0, runBlocking { database.progressionDao().awardCount() })
+        assertEquals(0, runBlocking { database.progressionDao().totalXp() })
+        assertNull(runBlocking { database.progressionDao().awardForActivity(id) })
+        assertEquals(0, runBlocking { database.walkingDao().sessionCount() })
+    }
+
+    @Test
+    fun anInterruptedStoppingWalkIsAwardedAfterRestart() {
+        runBlocking {
+            database.walkingDao().insertSession(
+                WalkingSessionEntity(
+                    state = "Stopping",
+                    startMillis = T0,
+                    updatedMillis = T0 + 60_000L,
+                    distanceMeters = 1_000.0,
+                    activeMillis = 60_000L,
+                    pausedMillis = 0L,
+                    activeSegmentStartMillis = null,
+                    pausedSegmentStartMillis = null,
+                    startLatitude = null,
+                    startLongitude = null,
+                    lastLatitude = null,
+                    lastLongitude = null,
+                    errorMessage = null,
+                ),
+            )
+        }
+
+        val recovered = createRepository()
+        settle()
+
+        val row = runBlocking { database.walkingDao().latestSession() }
+        assertEquals("Completed", row?.state)
+
+        val award = runBlocking { database.progressionDao().awardForActivity(row!!.id) }
+        assertNotNull(award)
+        assertEquals(XpCalculator.xpFor(1_000.0), award!!.xp)
+        assertEquals(1, runBlocking { database.progressionDao().awardCount() })
+        assertEquals(award.xp, runBlocking { database.progressionDao().totalXp() })
+        assertNotNull(recovered.lastCompletedSession.value)
+        assertNotNull(progression.awardEvent.value)
     }
 
     @Test
@@ -886,11 +1014,18 @@ class WalkingRepositoryTest {
     private fun createRepository(): WalkingRepositoryImpl = WalkingRepositoryImpl(
         locationDataSource = location,
         dao = database.walkingDao(),
+        progression = progression,
         permissionState = { permission },
         now = { currentTime },
         measureDistance = { from, to -> flatDistance(from, to) },
         stepCountNow = { sensorCount },
         scope = testScope,
+    )
+
+    private fun createProgression() = ProgressionRepositoryImpl(
+        database = database,
+        now = { currentTime },
+        zone = ZoneOffset.UTC,
     )
 
     private fun killScope() {
