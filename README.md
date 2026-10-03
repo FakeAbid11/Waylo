@@ -4,12 +4,13 @@ Waylo is a walking-focused Android application that turns everyday walking into 
 step tracking, GPS walks, XP, levels, streaks, achievements, a fox mascot, and a virtual
 exploration journey.
 
-**Current implementation phase: Phase 9 — Mascot system.**
+**Current implementation phase: Phase 10 — Achievements + rewards.**
 
 Phase 1 (foundation, architecture, design system), Phase 2 (onboarding + permissions),
 Phase 3 (step tracking), Phase 4 (GPS walking engine), Phase 5 (MapLibre map),
 Phase 6 (workout statistics), Phase 7 (finished activity + history), Phase 8
-(XP + levels + streaks) and Phase 9 (mascot system) are implemented: a
+(XP + levels + streaks), Phase 9 (mascot system) and Phase 10 (achievements + rewards)
+are implemented: a
 six-step onboarding flow (welcome,
 concepts, companion, permission explanations, permission requests, ready), DataStore-persisted
 onboarding completion, a permission architecture with `ACTIVITY_RECOGNITION` (API 29+) and
@@ -24,16 +25,18 @@ estimated calories, walk steps) with a completion summary, and a finished-activi
 with an activity history (date-grouped, newest first) offering route replay and confirmed
 deletion, plus a local-first XP ledger with levels and day-streaks shown on Home, Profile,
 Progress and the finished-activity screen, plus a state-driven fox mascot whose expression,
-message and animation follow a deterministic priority resolver. Offline maps, achievements,
-the exploration journey, and any cloud features are intentionally *not* implemented yet;
-those screens show honest zero/empty placeholder states.
+message and animation follow a deterministic priority resolver, plus a local-first
+achievements + rewards system with stable ids, a pure evaluator, idempotent unlocks, live
+progress and a dedicated screen. Offline maps, the exploration journey, and any cloud
+features are intentionally *not* implemented yet; those screens show honest zero/empty
+placeholder states.
 
 ## Technology stack
 
 - Kotlin
 - Jetpack Compose + Material 3
 - Navigation Compose
-- Room (walk session + route point persistence, XP ledger + progression, schema migrations 1 → 4)
+- Room (walk session + route point persistence, XP ledger + progression, achievement unlocks, schema migrations 1 → 5)
 - DataStore Preferences (onboarding state, daily step goal, step baseline + weight)
 - Android sensor APIs (`TYPE_STEP_COUNTER`)
 - Android location APIs (`LocationManager`, `Location.distanceBetween`)
@@ -50,19 +53,21 @@ those screens show honest zero/empty placeholder states.
 app/src/main/java/com/waylo/app
 ├── MainActivity.kt
 ├── WayloApplication.kt
-├── core/common          pure calculation helpers (step baseline/rollover, WalkingEngine, XP/level/streak math, mascot resolver/content)
+├── core/common          pure calculation helpers (step baseline/rollover, WalkingEngine, XP/level/streak math, mascot resolver/content, achievement catalog/evaluator)
 ├── core/permissions     permission model, PermissionManager, settings intents
 ├── core/util            formatting helpers (distance, duration, counts)
-├── data/local           Room database (settings + walking sessions + route points + XP ledger/progression)
+├── data/achievement     AchievementRepository (reconciliation, idempotent unlocks, progress snapshots, one-shot events)
+├── data/local           Room database (settings + walking sessions + route points + XP ledger/progression + achievement unlocks)
 ├── data/location        LocationDataSource (LocationManager) + framework distance
 ├── data/map             MapLibre style config, route GeoJSON, map/camera state policy
 ├── data/preferences     DataStore-backed WayloPreferences (onboarding state)
 ├── data/progression     ProgressionRepository (XP awards, level/streak recalculation)
 ├── data/step            step sensor, step state store, StepRepository
 ├── data/walk            WalkingRepository (walk state machine + persistence)
-├── domain/model         DailyGoal, DailyStepState, WalkingState/WalkingSession, UserProgress, models
+├── domain/model         DailyGoal, DailyStepState, WalkingState/WalkingSession, UserProgress, Achievement models
 ├── service              WalkingForegroundService (location foreground service)
 ├── ui
+│   ├── achievements/    Achievement screen + AchievementViewModel (catalog, progress, filters, unlock banner)
 │   ├── components/      reusable Waylo components
 │   ├── explore/         Explore screen + decorative journey illustration
 │   ├── home/            Home screen + HomeViewModel (live steps + goal + walk entry)
@@ -127,8 +132,12 @@ events), completion-driven XP awards inside `WalkingRepository`, the Home/Progre
 ActivityDetail ViewModel progression wiring (level-up banner, XP card, one-shot event),
 and the mascot system: the pure state/reaction priority resolver (`MascotResolverTest`:
 every signal, override order, determinism, context derivation from `UserProgress`) and the
-deterministic mascot messaging (`MascotContentTest`: per-state messages, XP/streak amounts,
-guilt-free language, unique contextual accessibility descriptions).
+deterministic mascot messaging(`MascotContentTest`: per-state messages, XP/streak amounts, guilt-free language, unique
+contextual accessibility descriptions), plus Phase 10 achievements: the pure evaluator and
+catalog invariants, `AchievementDao` insert-if-absent semantics, `AchievementRepository`
+(idempotent reconciliation, retroactive unlocks, permanent deletion policy, one-shot events,
+snapshot union), the Room 4 → 5 migration, `AchievementViewModel` (loading, locked/unlocked
+progress, filters, error + retry, one-shot banner) and walking-repository unlock integration.
 
 ## GitHub Actions
 
@@ -438,6 +447,116 @@ Failing compilation or failing unit tests fail the workflow.
   priority matrix, determinism, `MascotContext.fromProgress` derivation) and
   `MascotContentTest` (per-state messages, XP/streak formatting, guilt-language guard,
   unique contextual descriptions).
+
+## Achievements and rewards (Phase 10)
+
+- Catalog (23 immutable definitions in `core/common/AchievementDefinitions.kt`): walks
+  (`first_walk`, `walks_10`, `walks_50`, `walks_100`), distance (`distance_1km`,
+  `distance_5km`, `distance_10km`, `distance_50km`, `distance_100km`), steps
+  (`steps_1000`, `steps_10000`, `steps_50000`, `steps_100000`, `steps_1000000`), streaks
+  (`streak_3`, `streak_7`, `streak_14`, `streak_30`, `streak_100`), XP (`xp_1000`,
+  `xp_5000`) and levels (`level_5`, `level_10`) across six categories (Walks, Distance,
+  Steps, Streaks, XP, Levels) — the PRD §33 catalog with the XP/level milestones added.
+  Ids are stable snake_case strings persisted in Room; titles/descriptions live only in
+  code, so a text or localization change can never corrupt stored state, and an id is
+  never shown to the user as text.
+- Requirement model: one small sealed `AchievementRequirement` (`CompletedWalks`,
+  `DistanceMeters`, `TotalXp`, `Level`, `StreakDays`, `Steps`, `ActiveDurationSeconds`)
+  evaluated with whole-number `current >= required` comparisons — never floating-point
+  equality and never exact equality, so a 10.42 km lifetime satisfies the 10 km milestone.
+- Pure evaluator: `AchievementEvaluator` in `core/common` (no Android/Room/Compose
+  imports) receives one summarized `AchievementContext` and returns every satisfied id in
+  definition order. Evaluation is deterministic — same context, same result — and a single
+  context can unlock several achievements at once.
+- Source data (all local, all real): completed-walk count, lifetime distance, walk steps
+  and active time come from SQL aggregates over `walking_sessions WHERE state='Completed'`;
+  XP and level come from the Phase 8 `xp_awards` ledger; streaks use the longest streak
+  derived from that ledger. Nothing is fabricated: step achievements count steps recorded
+  during completed walks, because Waylo persists no lifetime non-walk step counter.
+- **Retroactive policy**: unlocks are evaluated from *existing* persisted data, so
+  historical walks and Phase 8 XP unlock their milestones on the first launch of Phase 10
+  (startup reconciliation in `WalkingRepositoryImpl.restoreSession`). Distance, walks,
+  steps and time reach back to pre-Phase-10 history (persisted since Phases 4–7); XP,
+  level and streak achievements only cover Phase 8 onward, because earlier days were
+  never recorded — unknown history is never guessed.
+- Unlock rules: evaluation runs after a walk is persisted `Completed` and its XP awarded
+  (`stopWalk`), and again at startup. Every satisfied id is inserted with atomic
+  `INSERT OR IGNORE` on the `achievement_unlocks` primary key, all inside one transaction,
+  so unlocks are idempotent, multiple unlocks land together, and only rows actually
+  inserted emit the one-shot `AchievementUnlockedEvent(activityId, unlocks, at)`.
+- Process death: a walk that completed but was never evaluated is reconciled on the next
+  startup (the same recovery path as Phase 8 award recovery). Re-running the evaluator is
+  always safe — no duplicate rows, no duplicate events, no duplicate celebrations.
+- Deletion policy: achievements are **permanent**. Deleting a walk removes its XP award
+  (Phase 8 behavior) but never revokes an unlock; an earned card keeps showing
+  "✓ Completed" with its unlock date even when recalculated totals fall below the
+  milestone, so badges can never flicker in and out of existence.
+- Rewards: recognition only — the unlocked badge/card plus one fox celebration. No
+  definition grants XP (`reward.xpBonus == 0` for every entry), so achievements cannot
+  inflate the Phase 8 ledger or create an XP loop; no monetization, purchases or
+  real-world value anywhere.
+- Persistence: Room schema version **5** with the non-destructive `MIGRATION_4_5`
+  creating `achievement_unlocks(achievementId TEXT PRIMARY KEY, unlockedAtMillis INTEGER)`.
+  No destructive migration exists anywhere in Waylo; walks, route points, XP and
+  progression are preserved, the migration itself awards nothing, and existing users
+  start with every achievement locked until explicit evaluation runs.
+- UI: a dedicated full-screen `achievements` route (back arrow, bottom bar hidden like
+  History) with "12 / 23 unlocked", category filter chips (All / Walks / Distance / Steps /
+  Streaks / XP / Levels) and cards showing a category icon, title, description, and either
+  real progress text + bar when locked ("1.24 km / 10.00 km", "3 / 10 walks",
+  "720 / 1,000 XP", "2 / 3 days", "Level 4 / 5") or "✓ Completed" with the Phase 7
+  `WayloDateFormatter` full date when earned. Empty states are positive and
+  non-judgmental: "Your journey starts here. / Complete your first walk to unlock your
+  first achievement." and "All achievements unlocked! / Keep walking.", both with the fox.
+- Entry points: Profile → Activity → "Achievements — N of M unlocked" and the Progress
+  screen's Achievements card ("12 / 23 unlocked · View all →") both open the screen; the
+  finished-activity screen shows an "Achievement unlocked!" card (or "3 achievements
+  unlocked!" with the list) for unlocks that belong to that walk, presented once via the
+  single-consumption event. XP, level and streak sections on Progress are untouched.
+- Mascot: Phase 9 is reused, never forked. `MascotContext.achievementCount` adds one
+  signal and `MascotReaction.AchievementUnlocked` renders through the existing
+  `Celebrating` state with "Achievement unlocked!" or "3 achievements unlocked!" — one
+  compact celebration for a whole batch, never a flash through each achievement.
+  Priority stays LevelUp > Achievement > XpEarned > walk tier > Streak > Ready > Resting;
+  there is no second mascot system and `MascotResolver` only gained one branch.
+- Accessibility: each card collapses into a single TalkBack description — "Walk a total of
+  10 kilometers. Locked. Progress: 1.24 kilometers of 10 kilometers." or "… Completed on
+  September 28, 2026." — progress is always available as spoken text in full words, and
+  icons are decorative (`contentDescription = null`) wherever text already conveys meaning.
+- Performance: one `combine` over five aggregate queries feeds all 23 achievements — no
+  per-achievement queries, no route points loaded, no polling loops; progress refreshes
+  from Room flows after walk completion, progression changes and startup.
+- Notifications & privacy: no push notifications and no notification permission are
+  added; unlocks surface in the finished activity, Progress, Profile and the Achievements
+  screen. Everything stays on-device — no server, no account, no analytics.
+- Limitations (honest): Home shows no achievement card (kept lightweight — unlock
+  presentation lives on the finished activity and the Achievements screen); unlock events
+  are in-memory, so an event emitted right before a crash is not replayed to the UI on the
+  next launch (the unlock row itself is durable and still displayed); step achievements
+  require a device step sensor plus completed-walk step data; pre-Phase-8 XP/streak
+  history does not exist and is never invented; and this project has no Compose UI test
+  dependency, so screen rendering is covered by ViewModel/pure-model tests and previews
+  rather than instrumentation.
+- Tests (475 total, 75 added): `AchievementEvaluatorTest` (first-walk, walk-count 4→locked/
+  5→unlocked, distance 999→locked/1000→unlocked/1240→unlocked, XP 999/1000, level 4/5,
+  streak 2/3, steps 9999/10000, active-duration bounds, one context unlocking many,
+  determinism, definition order, progress clamping), `AchievementCatalogTest` (stable
+  unique ids, no leaked ids as titles, positive targets, recognition-only rewards, catalog
+  scope), `AchievementDaoTest` (insert-if-absent, duplicate ignored with the original
+  timestamp, lookups, counts, observation), `AchievementRepositoryTest` (fresh install,
+  idempotent reconcile, single-event multi-unlock, retroactive history, ledger-driven
+  XP/level/streak, deletion never revokes, one-shot consume, snapshot union + live
+  progress, restarted-repository recovery, null-step totals), `WayloDatabaseMigrationTest`
+  (4 → 5: history and XP preserved, empty achievement table, insert-if-absent round-trip),
+  `AchievementViewModelTest` (loading, locked/unlocked cards, unit-true progress and
+  spoken text, category filters, empty-state flags, error + retry, one-shot banner),
+  walking-repository integration (first walk unlocks exactly once across a restart, one
+  walk unlocking distance + steps together, startup reconciliation after process death,
+  deletion keeping unlocks), `ActivityDetailViewModelTest` (unlock card surfaced once and
+  consumed for this walk, ignored for others), mascot tests (achievement priority over
+  XP/celebration, level-up still wins, message counts, guilt-free language) and
+  `ProgressViewModelTest` (summary wiring). No Compose UI tests exist in this project, so
+  none were added.
 
 ## Design system
 
