@@ -6,6 +6,7 @@ import com.waylo.app.data.local.WayloDatabase
 import com.waylo.app.data.local.WalkingSessionEntity
 import com.waylo.app.data.location.LocationDataSource
 import com.waylo.app.domain.model.LocationSample
+import com.waylo.app.domain.model.WalkRoute
 import com.waylo.app.domain.model.WalkingState
 import com.waylo.app.domain.model.WalkingStatus
 import kotlinx.coroutines.CoroutineScope
@@ -465,6 +466,125 @@ class WalkingRepositoryTest {
         assertNull(repository.status.value.errorMessage)
     }
 
+    @Test
+    fun routeStartsEmptyAndTracksOnlyAcceptedPoints() {
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        assertTrue(repository.route.value.isEmpty)
+
+        location.emit(sample(latitude = 52.0, timestampMillis = T0))
+        awaitStatus(repository) { it.hasFix }
+        currentTime = T0 + 30_000L
+        location.emit(sample(latitude = 52.001, timestampMillis = T0 + 30_000L))
+        awaitStatus(repository) { it.distanceMeters > 50.0 }
+        currentTime = T0 + 31_000L
+        location.emit(sample(latitude = 52.5, timestampMillis = T0 + 31_000L))
+        settle()
+
+        val route = repository.route.value
+        assertEquals(listOf(52.0, 52.001), route.points.map { it.latitude })
+        assertEquals(2, route.points.size)
+    }
+
+    @Test
+    fun pauseBreaksTheRouteAndResumeKeepsTheRecordedHistory() {
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        location.emit(sample(latitude = 52.0, timestampMillis = T0))
+        awaitStatus(repository) { it.hasFix }
+        currentTime = T0 + 60_000L
+        location.emit(sample(latitude = 52.001, timestampMillis = T0 + 60_000L))
+        awaitStatus(repository) { it.distanceMeters > 50.0 }
+
+        repository.pauseWalk()
+        awaitStatus(repository) { it.state == WalkingState.Paused }
+        settle()
+
+        assertEquals(2, repository.route.value.points.size)
+        assertEquals(setOf(2), repository.route.value.breakBeforeIndexes)
+        assertEquals(1, repository.route.value.segments().size)
+
+        currentTime = T0 + 180_000L
+        repository.resumeWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        location.emit(sample(latitude = 52.002, timestampMillis = T0 + 180_000L))
+        awaitRoute(repository) { it.points.size == 3 }
+        settle()
+
+        val segments = repository.route.value.segments()
+        assertEquals(2, segments.size)
+        assertEquals(listOf(52.0, 52.001), segments[0].map { it.latitude })
+        assertEquals(listOf(52.002), segments[1].map { it.latitude })
+    }
+
+    @Test
+    fun completedRouteSurvivesDismissOnlyUntilTheWalkEnds() {
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        location.emit(sample(latitude = 52.0, timestampMillis = T0))
+        awaitStatus(repository) { it.hasFix }
+        currentTime = T0 + 60_000L
+        location.emit(sample(latitude = 52.001, timestampMillis = T0 + 60_000L))
+        awaitStatus(repository) { it.distanceMeters > 50.0 }
+
+        repository.stopWalk()
+        awaitStatus(repository) { it.state == WalkingState.Completed }
+        settle()
+        assertEquals(2, repository.route.value.points.size)
+
+        repository.dismissCompleted()
+        awaitStatus(repository) { it.state == WalkingState.Idle }
+        settle()
+        assertTrue(repository.route.value.isEmpty)
+    }
+
+    @Test
+    fun routeIsRestoredFromDatabaseAfterProcessDeath() {
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        location.emit(sample(latitude = 52.0, timestampMillis = T0))
+        awaitStatus(repository) { it.hasFix }
+        currentTime = T0 + 60_000L
+        location.emit(sample(latitude = 52.001, timestampMillis = T0 + 60_000L))
+        awaitStatus(repository) { it.distanceMeters > 50.0 }
+        settle()
+
+        killScope()
+        location.listener = null
+        currentTime = T0 + 360_000L
+        val recovered = createRepository()
+        awaitStatus(recovered) { it.state == WalkingState.Active }
+        settle()
+
+        val route = recovered.route.value
+        assertEquals(listOf(52.0, 52.001), route.points.map { it.latitude })
+        assertEquals(listOf(0, 1), route.points.map { it.sequence })
+    }
+
+    @Test
+    fun errorSessionRestoresItsRecordedRoute() {
+        repository.startWalk()
+        awaitStatus(repository) { it.state == WalkingState.Active }
+        location.emit(sample(latitude = 52.0, timestampMillis = T0))
+        awaitStatus(repository) { it.hasFix }
+        currentTime = T0 + 60_000L
+        location.emit(sample(latitude = 52.001, timestampMillis = T0 + 60_000L))
+        awaitStatus(repository) { it.distanceMeters > 50.0 }
+        settle()
+
+        repository.detachService()
+        awaitStatus(repository) { it.state == WalkingState.Error }
+        settle()
+
+        killScope()
+        location.listener = null
+        val recovered = createRepository()
+        awaitStatus(recovered) { it.state == WalkingState.Error }
+        settle()
+
+        assertEquals(2, recovered.route.value.points.size)
+    }
+
     private fun createRepository(): WalkingRepositoryImpl = WalkingRepositoryImpl(
         locationDataSource = location,
         dao = database.walkingDao(),
@@ -486,6 +606,13 @@ class WalkingRepositoryTest {
         predicate: (WalkingStatus) -> Boolean,
     ): WalkingStatus = runBlocking {
         withTimeout(15_000) { target.status.first(predicate) }
+    }
+
+    private fun awaitRoute(
+        target: WalkingRepositoryImpl,
+        predicate: (WalkRoute) -> Boolean,
+    ): WalkRoute = runBlocking {
+        withTimeout(15_000) { target.route.first(predicate) }
     }
 
     private fun settle() = runBlocking {

@@ -5,6 +5,7 @@ import com.waylo.app.data.step.StepRepository
 import com.waylo.app.data.walk.WalkingRepository
 import com.waylo.app.domain.model.DailyStepState
 import com.waylo.app.domain.model.StepStatus
+import com.waylo.app.domain.model.WalkRoute
 import com.waylo.app.domain.model.WalkingState
 import com.waylo.app.domain.model.WalkingStatus
 import kotlinx.coroutines.CoroutineScope
@@ -58,6 +59,7 @@ class HomeViewModelTest {
     ) : WalkingRepository {
         private val _status = MutableStateFlow(initialState)
         override val status: StateFlow<WalkingStatus> = _status.asStateFlow()
+        override val route: StateFlow<WalkRoute> = MutableStateFlow(WalkRoute()).asStateFlow()
 
         override fun startWalk() = Unit
         override fun pauseWalk() = Unit

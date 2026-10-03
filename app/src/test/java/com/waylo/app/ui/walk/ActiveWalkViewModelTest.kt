@@ -1,17 +1,27 @@
 package com.waylo.app.ui.walk
 
 import com.waylo.app.core.permissions.PermissionState
+import com.waylo.app.data.map.MapCameraCommand
+import com.waylo.app.data.map.MapLatLng
+import com.waylo.app.data.map.WalkMapLoadState
 import com.waylo.app.data.walk.WalkingRepository
+import com.waylo.app.domain.model.WalkRoute
+import com.waylo.app.domain.model.WalkingLocationPoint
 import com.waylo.app.domain.model.WalkingState
 import com.waylo.app.domain.model.WalkingStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOf
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ActiveWalkViewModelTest {
@@ -21,6 +31,9 @@ class ActiveWalkViewModelTest {
     ) : WalkingRepository {
         private val _status = MutableStateFlow(initialState)
         override val status: StateFlow<WalkingStatus> = _status.asStateFlow()
+
+        private val _route = MutableStateFlow(WalkRoute())
+        override val route: StateFlow<WalkRoute> = _route.asStateFlow()
 
         var startCalls = 0
         var pauseCalls = 0
@@ -64,6 +77,10 @@ class ActiveWalkViewModelTest {
         fun emit(status: WalkingStatus) {
             _status.value = status
         }
+
+        fun emitRoute(route: WalkRoute) {
+            _route.value = route
+        }
     }
 
     private val testScope = CoroutineScope(Dispatchers.Unconfined)
@@ -73,10 +90,12 @@ class ActiveWalkViewModelTest {
 
     private fun createViewModel(
         startService: () -> Unit = { serviceStarts += 1 },
+        networkStatus: Flow<Boolean> = flowOf(true),
     ): ActiveWalkViewModel = ActiveWalkViewModel(
         repository = repository,
         startService = startService,
         now = { currentTime },
+        networkStatus = networkStatus,
         stateScope = testScope,
     )
 
@@ -275,4 +294,105 @@ class ActiveWalkViewModelTest {
 
         assertEquals(1, reportErrors)
     }
+
+    @Test
+    fun mapLoadFailuresRecoverThroughRetry() {
+        val viewModel = createViewModel()
+        assertEquals(WalkMapLoadState.Loading, viewModel.uiState.value.map.loadState)
+
+        viewModel.onMapStyleFailed()
+        assertEquals(WalkMapLoadState.StyleError, viewModel.uiState.value.map.loadState)
+
+        viewModel.retryMapStyle()
+        val retried = viewModel.uiState.value.map
+        assertEquals(WalkMapLoadState.Loading, retried.loadState)
+        assertEquals(1L, retried.styleGeneration)
+
+        viewModel.onMapStyleLoaded()
+        assertEquals(WalkMapLoadState.Ready, viewModel.uiState.value.map.loadState)
+    }
+
+    @Test
+    fun losingTheNetworkHidesTheMapUntilItReturns() {
+        val network = MutableStateFlow(true)
+        val viewModel = createViewModel(networkStatus = network)
+        viewModel.onMapStyleLoaded()
+        assertEquals(WalkMapLoadState.Ready, viewModel.uiState.value.map.loadState)
+
+        network.value = false
+        assertEquals(WalkMapLoadState.Unavailable, viewModel.uiState.value.map.loadState)
+
+        network.value = true
+        assertEquals(WalkMapLoadState.Ready, viewModel.uiState.value.map.loadState)
+        assertEquals(0L, viewModel.uiState.value.map.styleGeneration)
+    }
+
+    @Test
+    fun routeProgressIsExposedAndTheCameraFollowsTheFirstFix() {
+        val viewModel = createViewModel()
+        val expected = WalkRoute().withPoint(point(sequence = 0, latitude = 52.0, longitude = 13.0))
+
+        repository.emitRoute(expected)
+
+        assertEquals(expected, viewModel.uiState.value.route)
+        val command = viewModel.uiState.value.map.cameraCommand as MapCameraCommand.MoveTo
+        assertEquals(MapLatLng(52.0, 13.0), command.target)
+        assertTrue(viewModel.uiState.value.map.followEnabled)
+    }
+
+    @Test
+    fun panningStopsTheFollowAndRecenteringResumesIt() {
+        val viewModel = createViewModel()
+        repository.emitRoute(WalkRoute().withPoint(point(0, 52.0, 13.0)))
+        val followCommand = viewModel.uiState.value.map.cameraCommand
+
+        viewModel.onMapPanGesture()
+        assertFalse(viewModel.uiState.value.map.followEnabled)
+
+        repository.emitRoute(
+            WalkRoute()
+                .withPoint(point(0, 52.0, 13.0))
+                .withPoint(point(1, 52.01, 13.0)),
+        )
+        assertSame(followCommand, viewModel.uiState.value.map.cameraCommand)
+
+        viewModel.onRecenterMap()
+        val recentered = viewModel.uiState.value.map
+        assertTrue(recentered.followEnabled)
+        val command = recentered.cameraCommand as MapCameraCommand.MoveTo
+        assertEquals(MapLatLng(52.01, 13.0), command.target)
+    }
+
+    @Test
+    fun finishingTheWalkFitsTheWholeRouteExactlyOnce() {
+        val viewModel = createViewModel()
+        repository.emitRoute(
+            WalkRoute()
+                .withPoint(point(0, 52.0, 13.0))
+                .withPoint(point(1, 52.02, 13.03)),
+        )
+
+        repository.emit(WalkingStatus(state = WalkingState.Completed, sessionId = 1L))
+        val command = viewModel.uiState.value.map.cameraCommand as MapCameraCommand.FitBounds
+        assertEquals(52.0, command.bounds.minLatitude, 0.0)
+        assertEquals(52.02, command.bounds.maxLatitude, 0.0)
+        assertFalse(viewModel.uiState.value.map.followEnabled)
+
+        repository.emit(WalkingStatus(state = WalkingState.Idle))
+        repository.emit(WalkingStatus(state = WalkingState.Completed, sessionId = 1L))
+        val again = viewModel.uiState.value.map.cameraCommand as MapCameraCommand.FitBounds
+        assertEquals(command.id, again.id)
+    }
+
+    private fun point(
+        sequence: Int,
+        latitude: Double,
+        longitude: Double,
+    ): WalkingLocationPoint = WalkingLocationPoint(
+        sessionId = 1L,
+        sequence = sequence,
+        latitude = latitude,
+        longitude = longitude,
+        timestampMillis = 1_000L + sequence,
+    )
 }
