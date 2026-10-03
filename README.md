@@ -4,11 +4,12 @@ Waylo is a walking-focused Android application that turns everyday walking into 
 step tracking, GPS walks, XP, levels, streaks, achievements, a fox mascot, and a virtual
 exploration journey.
 
-**Current implementation phase: Phase 7 — Finished activity + history.**
+**Current implementation phase: Phase 8 — XP, levels and streaks.**
 
 Phase 1 (foundation, architecture, design system), Phase 2 (onboarding + permissions),
 Phase 3 (step tracking), Phase 4 (GPS walking engine), Phase 5 (MapLibre map),
-Phase 6 (workout statistics) and Phase 7 (finished activity + history) are implemented: a
+Phase 6 (workout statistics), Phase 7 (finished activity + history) and Phase 8
+(XP + levels + streaks) are implemented: a
 six-step onboarding flow (welcome,
 concepts, companion, permission explanations, permission requests, ready), DataStore-persisted
 onboarding completion, a permission architecture with `ACTIVITY_RECOGNITION` (API 29+) and
@@ -21,16 +22,17 @@ with a live route polyline, current-position marker, camera follow/recenter and 
 loading/offline/style-error states, workout statistics (distance, duration, pace, speed,
 estimated calories, walk steps) with a completion summary, and a finished-activity screen
 with an activity history (date-grouped, newest first) offering route replay and confirmed
-deletion. Offline maps, XP/streak/achievement logic, and any cloud
-features are intentionally *not* implemented yet; those screens show honest zero/empty
-placeholder states.
+deletion, plus a local-first XP ledger with levels and day-streaks shown on Home, Profile,
+Progress and the finished-activity screen. Offline maps, achievements, the fox mascot/
+exploration journey, and any cloud features are intentionally *not* implemented yet; those
+screens show honest zero/empty placeholder states.
 
 ## Technology stack
 
 - Kotlin
 - Jetpack Compose + Material 3
 - Navigation Compose
-- Room (walk session + route point persistence, schema migrations 1 → 3)
+- Room (walk session + route point persistence, XP ledger + progression, schema migrations 1 → 4)
 - DataStore Preferences (onboarding state, daily step goal, step baseline + weight)
 - Android sensor APIs (`TYPE_STEP_COUNTER`)
 - Android location APIs (`LocationManager`, `Location.distanceBetween`)
@@ -47,16 +49,17 @@ placeholder states.
 app/src/main/java/com/waylo/app
 ├── MainActivity.kt
 ├── WayloApplication.kt
-├── core/common          pure calculation helpers (step baseline/rollover, WalkingEngine)
+├── core/common          pure calculation helpers (step baseline/rollover, WalkingEngine, XP/level/streak math)
 ├── core/permissions     permission model, PermissionManager, settings intents
 ├── core/util            formatting helpers (distance, duration, counts)
-├── data/local           Room database (settings + walking sessions + route points)
+├── data/local           Room database (settings + walking sessions + route points + XP ledger/progression)
 ├── data/location        LocationDataSource (LocationManager) + framework distance
 ├── data/map             MapLibre style config, route GeoJSON, map/camera state policy
 ├── data/preferences     DataStore-backed WayloPreferences (onboarding state)
+├── data/progression     ProgressionRepository (XP awards, level/streak recalculation)
 ├── data/step            step sensor, step state store, StepRepository
 ├── data/walk            WalkingRepository (walk state machine + persistence)
-├── domain/model         DailyGoal, DailyStepState, WalkingState/WalkingSession, models
+├── domain/model         DailyGoal, DailyStepState, WalkingState/WalkingSession, UserProgress, models
 ├── service              WalkingForegroundService (location foreground service)
 ├── ui
 │   ├── components/      reusable Waylo components
@@ -108,14 +111,19 @@ completion fitting), `WalkingRepository` state transitions with a fake location 
 error paths) plus its live `route` flow (append/pause segments/dismiss/DB restore),
 `WalkRoute` segments and bounds, exact route/marker GeoJSON rendering (including pause
 splitting), `WalkMapCameraPolicy` (load-state machine, follow thresholds, recenter, fitting
-the finished route), `FrameworkDistance` under Robolectric, the Room 1 → 2 and 2 → 3
-schema migrations against hand-built v1/v2 databases, the pure `WorkoutStatisticsCalculator`
+the finished route), `FrameworkDistance` under Robolectric, the Room 1 → 2, 2 → 3 and 3 → 4
+schema migrations against hand-built v1/v2/v3 databases, the pure `WorkoutStatisticsCalculator`
 (average thresholds and invalid inputs, the rolling current-pace window with pause/gap/noise
 rules, MET-based calorie estimates, walk-step deltas and counter resets), the pace/speed/
 calorie/step formatters plus the meters/kilometers distance format, `WeightValidator`,
 `WayloPreferences` weight persistence, raw sensor-counter exposure, repository walk-step
 baselines (capture/snapshot/unavailable/reset/process-death recovery/`lastCompletedSession`
-restore) and `ActiveWalkViewModel` statistics wiring.
+restore) and `ActiveWalkViewModel` statistics wiring, the pure `XpCalculator`,
+`LevelCalculator` and `StreakCalculator`, the `xp_awards` DAO (unique-award index, ledger
+sums, reactive flows), `ProgressionRepository` behaviour (award outcomes, idempotency across
+repository restarts, day streaks, cascade deletion, era-guarded recovery, one-shot award
+events), completion-driven XP awards inside `WalkingRepository`, and the Home/Progress/
+ActivityDetail ViewModel progression wiring (level-up banner, XP card, one-shot event).
 
 ## GitHub Actions
 
@@ -147,7 +155,7 @@ Failing compilation or failing unit tests fail the workflow.
 - Daily goal: default 6,000 steps, editable from Profile → Preferences → Daily step goal
   (validated to 1,000–100,000 whole steps, persisted in DataStore). Progress is capped at
   100% visually while stored steps are never capped; completing the goal shows the text
-  "Daily goal complete!" (no XP/streak rewards yet).
+  "Daily goal complete!" (step goals grant no XP — XP comes from walked distance, Phase 8).
 
 ## GPS walking engine (Phase 4)
 
@@ -329,6 +337,59 @@ Failing compilation or failing unit tests fail the workflow.
   `ActivityDetailViewModelTest` (Phase 6 statistics regression, NotFound/Error/retry,
   route-failure fallback, camera fitting, deletion). No Compose UI tests exist in this
   project, so none were added.
+
+## XP, levels and streaks (Phase 8)
+
+- XP formula: distance-driven — `round(distanceMeters / 1000 × 100)` (100 XP per
+  kilometer) via the pure `XpCalculator`, awarded only when a completed walk recorded at
+  least 100.0 m; shorter walks earn 0 XP and never create a ledger row (no empty awards).
+- Idempotent ledger: every award is one `xp_awards` row with a unique index on
+  `activityId`, so retries — stop-time award, restore-time recovery, a second repository
+  instance — return `AlreadyAwarded` instead of double-counting; total XP is always
+  `SUM(xp_awards.xp)` recomputed transactionally with the award, never a mutable counter.
+- Levels: pure `LevelCalculator` — advancing level `L → L+1` costs `100 × L²`, so level 1
+  starts at 0 XP, level 2 at 100, level 3 at 500 and so on (cumulative sums are computed
+  closed-form; `MAX_LEVEL` 401 keeps every value inside `Int`). The UI shows XP into the
+  current level over that level's requirement.
+- Streaks: pure `StreakCalculator` over distinct **local calendar days** (device zone,
+  injectable clock) that contain at least one qualifying award (`xp > 0`); the current
+  streak accepts a one-day grace (today *or* yesterday), the longest streak is the maximum
+  run ever seen. Display values are recomputed live from the ledger on every database
+  change, so they can never drift; the single `progression` row mirrors them only for the
+  stored aggregates.
+- Persistence: Room schema version 4 adds `xp_awards` (activityId, xp, awardedAt) and
+  `progression` (single row id = 1: totalXp, streak mirrors, `updatedAtMillis`,
+  `createdAtMillis` era marker) with migration `3 → 4`. The migration creates both tables,
+  backfills an empty progression row and awards **nothing** for pre-existing history —
+  the ledger starts clean at Phase 8 (retroactive XP for old walks is out of scope), and
+  `createdAtMillis` marks the era for restore-time recovery.
+- Award trigger: `WalkingRepositoryImpl.stopWalk()` awards explicitly after the session
+  row persists `Completed` (never driven by Flow observation alone); on restart,
+  `recoverAwardIfNeeded` closes the process-death window for interrupted `Stopping →
+  Completed` and missed `Completed` rows, guarded by the era marker
+  (`sessionUpdatedMillis ≥ createdAtMillis`) and made harmless by the unique index.
+- Deletion: deleting a walk removes its award and re-derives total/streaks inside the
+  *same* Room transaction (`ProgressionRepository.deleteActivityCascade` wraps the
+  session/route delete), so history deletion can never strand XP or freeze a streak.
+- UI: Home's XP card and the Profile header show level and lifetime total XP; the
+  Progress screen shows the level, XP bar (into/required), total XP and current/longest
+  streaks from the real ledger; the finished-activity screen shows the persisted "XP
+  earned" for that walk plus a one-shot "Level up!" banner (`Level n → n+1`) consumed from
+  a single-consumption `awardEvent` only when the event belongs to the walk on screen.
+- Limitations (honest): XP derives from walked distance only (steps and the daily goal
+  grant none); pre-Phase-8 walks earn no XP; streaks refresh when the database changes
+  (opening a history/detail screen recomputes them) rather than from a midnight timer;
+  awards are produced locally with no cloud sync, achievements, fox mascot or exploration
+  journey yet.
+- Tests (367 total, 59 added): `XpCalculatorTest` (formula + distance threshold),
+  `LevelCalculatorTest` (curve, exact thresholds, huge-value bounds),
+  `StreakCalculatorTest` (day runs, grace, gaps), `ProgressionDaoTest` (unique-award
+  index, ledger sums, reactive flows), `ProgressionRepositoryTest` (award outcomes,
+  idempotency across restarts, streak days, cascade deletion, era-guarded recovery,
+  one-shot events), `WayloDatabaseMigrationTest` (3 → 4: history preserved, empty ledger,
+  schema round-trip), repository completion/short-walk/`Stopping`-recovery/deletion XP
+  tests, and Home/Progress/ActivityDetail ViewModel tests (total XP wiring, level-up
+  banner, consumed event). No Compose UI tests exist in this project, so none were added.
 
 ## Design system
 
