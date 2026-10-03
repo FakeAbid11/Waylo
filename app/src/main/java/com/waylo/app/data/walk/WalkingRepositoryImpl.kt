@@ -14,9 +14,11 @@ import com.waylo.app.domain.model.WalkingState
 import com.waylo.app.domain.model.WalkingStatus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -181,6 +183,27 @@ class WalkingRepositoryImpl(
                 emitStatus()
             }
         }
+    }
+
+    override fun observeCompletedSessions(): Flow<List<WalkingSession>> =
+        dao.observeCompletedSessions().map { rows -> rows.map { it.toDomain() } }
+
+    override fun observeSession(id: Long): Flow<WalkingSession?> =
+        dao.observeSession(id).map { row -> row?.toDomain() }
+
+    override suspend fun routeForSession(sessionId: Long): WalkRoute = WalkRoute(
+        points = dao.locationPoints(sessionId).mapNotNull { row ->
+            row.toDomain().takeIf { it.hasPlottablePosition() }
+        },
+    )
+
+    override suspend fun deleteActivity(sessionId: Long): Boolean = mutex.withLock {
+        loaded.await()
+        val removed = dao.deleteActivity(sessionId)
+        if (removed && _lastCompletedSession.value?.id == sessionId) {
+            _lastCompletedSession.value = null
+        }
+        removed
     }
 
     override fun attachService() {
@@ -470,3 +493,9 @@ private fun WalkingLocationPointEntity.toDomain(): WalkingLocationPoint = Walkin
     altitudeMeters = altitudeMeters,
     speedMps = speedMps,
 )
+
+private fun WalkingLocationPoint.hasPlottablePosition(): Boolean =
+    latitude.isFinite() &&
+        longitude.isFinite() &&
+        latitude in -90.0..90.0 &&
+        longitude in -180.0..180.0

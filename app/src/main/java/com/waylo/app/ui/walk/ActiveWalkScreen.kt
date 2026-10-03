@@ -30,6 +30,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -63,6 +64,7 @@ import com.waylo.app.ui.theme.WayloTheme
 @Composable
 fun ActiveWalkRoute(
     onDone: () -> Unit,
+    onWalkFinished: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -108,6 +110,14 @@ fun ActiveWalkRoute(
     BackHandler(enabled = state.status.state == WalkingState.Completed) {
         viewModel.finishCompleted()
         onDone()
+    }
+
+    LaunchedEffect(state.status.state, state.status.sessionId) {
+        val finishedId = state.status.sessionId
+        if (state.status.state == WalkingState.Completed && finishedId != null) {
+            viewModel.finishCompleted()
+            onWalkFinished(finishedId)
+        }
     }
 
     ActiveWalkScreen(

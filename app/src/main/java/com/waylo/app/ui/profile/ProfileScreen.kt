@@ -54,7 +54,10 @@ import com.waylo.app.ui.theme.WayloTheme
 import kotlinx.coroutines.launch
 
 @Composable
-fun ProfileRoute(modifier: Modifier = Modifier) {
+fun ProfileRoute(
+    onOpenHistory: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     val application = LocalContext.current.applicationContext as WayloApplication
     val viewModel: PermissionsViewModel = viewModel(
         factory = PermissionsViewModel.factory(application.permissionManager),
@@ -73,6 +76,7 @@ fun ProfileRoute(modifier: Modifier = Modifier) {
         permissionStatuses = uiState.statuses,
         dailyStepGoal = stepState.goal,
         weightKg = weightKg,
+        onOpenHistory = onOpenHistory,
         onSaveDailyGoal = { goal ->
             goalScope.launch { application.stepRepository.setDailyGoal(goal) }
         },
@@ -89,6 +93,7 @@ fun ProfileScreen(
     permissionStatuses: List<PermissionStatus> = emptyList(),
     dailyStepGoal: Long = DailyGoalValidator.DEFAULT_STEPS,
     weightKg: Int? = null,
+    onOpenHistory: () -> Unit = {},
     onSaveDailyGoal: (Long) -> Unit = {},
     onSaveWeight: (Int?) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -119,6 +124,7 @@ fun ProfileScreen(
             onEditGoal = { showGoalDialog = true },
             onEditWeight = { showWeightDialog = true },
         )
+        ActivitySection(onOpenHistory = onOpenHistory)
         SettingsSection()
 
         if (showGoalDialog) {
@@ -219,6 +225,20 @@ private fun PreferencesSection(
                 title = "Weight",
                 value = weightKg?.let { "$it kg" } ?: WayloFormat.DASH,
                 onClick = onEditWeight,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActivitySection(onOpenHistory: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing)) {
+        WayloSectionHeader(title = "Activity")
+        WayloCard(contentPadding = PaddingValues(0.dp)) {
+            SettingRow(
+                title = "Activity history",
+                value = "View",
+                onClick = onOpenHistory,
             )
         }
     }

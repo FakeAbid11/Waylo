@@ -23,6 +23,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.waylo.app.WayloApplication
 import com.waylo.app.ui.components.WayloBottomNavigation
+import com.waylo.app.ui.navigation.ACTIVITY_ROUTE
+import com.waylo.app.ui.navigation.HISTORY_ROUTE
 import com.waylo.app.ui.navigation.ONBOARDING_ROUTE
 import com.waylo.app.ui.navigation.StartupDestination
 import com.waylo.app.ui.navigation.WALK_ROUTE
@@ -58,7 +60,12 @@ private fun WayloContent(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            if (currentRoute != null && currentRoute != ONBOARDING_ROUTE && currentRoute != WALK_ROUTE) {
+            val hideBottomBar = currentRoute == null ||
+                currentRoute == ONBOARDING_ROUTE ||
+                currentRoute == WALK_ROUTE ||
+                currentRoute == HISTORY_ROUTE ||
+                currentRoute == ACTIVITY_ROUTE
+            if (!hideBottomBar) {
                 WayloBottomNavigation(
                     currentRoute = currentRoute,
                     onNavigate = { route -> navController.navigateToBottomDestination(route) },
