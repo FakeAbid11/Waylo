@@ -45,6 +45,8 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.waylo.app.WayloApplication
+import com.waylo.app.core.common.MascotContext
+import com.waylo.app.core.common.MascotResolver
 import com.waylo.app.core.permissions.WayloPermission
 import com.waylo.app.core.permissions.openAppSettings
 import com.waylo.app.core.util.WayloFormat
@@ -54,6 +56,7 @@ import com.waylo.app.domain.model.WalkingState
 import com.waylo.app.domain.model.WalkingStatus
 import com.waylo.app.service.WalkingForegroundService
 import com.waylo.app.ui.components.WayloCard
+import com.waylo.app.ui.components.WayloMascot
 import com.waylo.app.ui.components.WayloPrimaryButton
 import com.waylo.app.ui.components.WayloStatCard
 import com.waylo.app.ui.theme.WayloColors
@@ -359,6 +362,13 @@ private fun WalkInfoPanel(state: ActiveWalkUiState) {
                     color = WayloColors.Cyan,
                 )
             }
+            WayloMascot(
+                state = MascotResolver.resolve(
+                    MascotContext(walkState = state.status.state),
+                ).state,
+                size = WayloDimens.smallMascotSize,
+                decorative = true,
+            )
             Column(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -647,6 +657,10 @@ private fun CompletionContent(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
         ) {
+            WayloMascot(
+                state = MascotResolver.resolve(MascotContext(justCompleted = true)).state,
+                decorative = true,
+            )
             Text(
                 text = "Walk Complete",
                 style = MaterialTheme.typography.headlineMedium,

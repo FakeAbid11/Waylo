@@ -26,9 +26,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.waylo.app.WayloApplication
+import com.waylo.app.core.common.MascotContent
+import com.waylo.app.core.common.MascotContext
+import com.waylo.app.core.common.MascotResolver
 import com.waylo.app.core.util.WayloFormat
 import com.waylo.app.domain.model.UserProgress
 import com.waylo.app.ui.components.WayloCard
+import com.waylo.app.ui.components.WayloMascot
 import com.waylo.app.ui.components.WayloProgressBar
 import com.waylo.app.ui.components.WayloSectionHeader
 import com.waylo.app.ui.components.WayloStatCard
@@ -70,6 +74,7 @@ fun ProgressScreen(
             style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )
+        MascotSection(progress = progress)
         LevelCard(progress)
         Row(horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing)) {
             WayloStatCard(
@@ -85,6 +90,28 @@ fun ProgressScreen(
         }
         TotalsSection(progress)
         AchievementsSection()
+    }
+}
+
+@Composable
+private fun MascotSection(progress: UserProgress) {
+    val mascotContext = MascotContext.fromProgress(progress)
+    val decision = MascotResolver.resolve(mascotContext)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
+    ) {
+        WayloMascot(
+            state = decision.state,
+            size = WayloDimens.smallMascotSize,
+        )
+        Text(
+            text = MascotContent.message(decision, mascotContext),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 

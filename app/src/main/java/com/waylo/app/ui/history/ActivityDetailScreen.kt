@@ -40,6 +40,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.waylo.app.WayloApplication
+import com.waylo.app.core.common.MascotContent
+import com.waylo.app.core.common.MascotContext
+import com.waylo.app.core.common.MascotResolver
 import com.waylo.app.core.util.WayloFormat
 import com.waylo.app.data.map.WalkMapLoadState
 import com.waylo.app.data.map.WalkMapState
@@ -49,6 +52,7 @@ import com.waylo.app.domain.model.WalkingSession
 import com.waylo.app.domain.model.WalkingState
 import com.waylo.app.domain.model.WorkoutStatistics
 import com.waylo.app.ui.components.WayloCard
+import com.waylo.app.ui.components.WayloMascot
 import com.waylo.app.ui.components.WayloPrimaryButton
 import com.waylo.app.ui.components.WayloStatCard
 import com.waylo.app.ui.theme.WayloColors
@@ -227,6 +231,29 @@ private fun LoadedContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+
+        val mascotContext = MascotContext(
+            justCompleted = true,
+            xpAwarded = state.xpAwarded ?: 0,
+            levelUp = state.levelUp != null,
+        )
+        val mascotDecision = MascotResolver.resolve(mascotContext)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
+        ) {
+            WayloMascot(
+                state = mascotDecision.state,
+                size = WayloDimens.smallMascotSize,
+                decorative = true,
+            )
+            Text(
+                text = MascotContent.message(mascotDecision, mascotContext),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         state.levelUp?.let { levelUp ->

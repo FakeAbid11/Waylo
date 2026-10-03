@@ -28,6 +28,9 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.waylo.app.WayloApplication
+import com.waylo.app.core.common.MascotContent
+import com.waylo.app.core.common.MascotContext
+import com.waylo.app.core.common.MascotResolver
 import com.waylo.app.core.permissions.PermissionState
 import com.waylo.app.core.permissions.WayloPermission
 import com.waylo.app.core.permissions.openAppSettings
@@ -35,6 +38,7 @@ import com.waylo.app.core.util.WayloFormat
 import com.waylo.app.domain.model.DailyStepState
 import com.waylo.app.domain.model.StepStatus
 import com.waylo.app.domain.model.UserProgress
+import com.waylo.app.domain.model.WalkingState
 import com.waylo.app.ui.components.WayloCard
 import com.waylo.app.ui.components.WayloMascot
 import com.waylo.app.ui.components.WayloPrimaryButton
@@ -106,7 +110,7 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(WayloDimens.sectionSpacing),
     ) {
         Greeting(state.greeting)
-        MascotSection()
+        MascotSection(state = state)
         StepsCard(state = state, onPermissionAction = onStepPermissionAction)
         WayloPrimaryButton(
             text = state.startWalkLabel,
@@ -132,15 +136,23 @@ private fun Greeting(greeting: String) {
 }
 
 @Composable
-private fun MascotSection() {
+private fun MascotSection(state: HomeUiState) {
+    val walkState = state.walkState.takeUnless {
+        it == WalkingState.Idle || it == WalkingState.Completed
+    }
+    val mascotContext = MascotContext.fromProgress(
+        progress = state.progress,
+        walkState = walkState,
+    )
+    val decision = MascotResolver.resolve(mascotContext)
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
     ) {
-        WayloMascot()
+        WayloMascot(state = decision.state)
         Text(
-            text = "Make every walk an adventure.",
+            text = MascotContent.message(decision, mascotContext),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

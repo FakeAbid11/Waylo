@@ -165,7 +165,7 @@ private fun ProfileHeader(progress: UserProgress) {
             horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            WayloMascot(size = WayloDimens.smallMascotSize)
+            WayloMascot(size = WayloDimens.smallMascotSize, decorative = true)
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
