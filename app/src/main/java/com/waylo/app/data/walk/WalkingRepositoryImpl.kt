@@ -27,6 +27,7 @@ class WalkingRepositoryImpl(
     private val permissionState: () -> PermissionState,
     private val now: () -> Long,
     private val measureDistance: (LocationSample, LocationSample) -> Double,
+    private val stepCountNow: () -> Long? = { null },
     private val scope: CoroutineScope,
 ) : WalkingRepository {
 
@@ -35,6 +36,10 @@ class WalkingRepositoryImpl(
 
     private val _route = MutableStateFlow(WalkRoute())
     override val route: StateFlow<WalkRoute> = _route.asStateFlow()
+
+    private val _lastCompletedSession = MutableStateFlow<WalkingSession?>(null)
+    override val lastCompletedSession: StateFlow<WalkingSession?> =
+        _lastCompletedSession.asStateFlow()
 
     private val mutex = Mutex()
     private val loaded = CompletableDeferred<Unit>()
@@ -59,7 +64,12 @@ class WalkingRepositoryImpl(
                 val current = session
                 if (current != null && current.state != WalkingState.Completed) return@withLock
                 val start = now()
-                val created = WalkingSession(state = WalkingState.Starting, startMillis = start, updatedMillis = start)
+                val created = WalkingSession(
+                    state = WalkingState.Starting,
+                    startMillis = start,
+                    updatedMillis = start,
+                    walkStartStepCount = captureWalkStartStepCount(),
+                )
                 val id = dao.insertSession(created.toEntity())
                 session = created.copy(id = id)
                 engine = WalkingEngine(measureDistance)
@@ -139,10 +149,12 @@ class WalkingRepositoryImpl(
                     pausedSegmentStartMillis = null,
                     updatedMillis = stopAt,
                     errorMessage = null,
+                    walkStepCount = finalWalkStepCount(stopping),
                 )
                 session = completed
                 persist(completed)
                 emitStatus()
+                _lastCompletedSession.value = completed
             }
         }
     }
@@ -307,6 +319,7 @@ class WalkingRepositoryImpl(
                     errorMessage = null,
                 )
                 persist(completed)
+                _lastCompletedSession.value = completed
             }
             WalkingState.Error -> {
                 session = restored
@@ -314,7 +327,8 @@ class WalkingRepositoryImpl(
                 _route.value = loadRoute(restored.id)
                 emitStatus()
             }
-            WalkingState.Completed, WalkingState.Idle -> Unit
+            WalkingState.Completed -> _lastCompletedSession.value = restored
+            WalkingState.Idle -> Unit
         }
     }
 
@@ -354,6 +368,15 @@ class WalkingRepositoryImpl(
         return permission == PermissionState.Granted || permission == PermissionState.Unsupported
     }
 
+    private fun captureWalkStartStepCount(): Long? = stepCountNow()?.takeIf { it > 0L }
+
+    private fun finalWalkStepCount(stopping: WalkingSession): Long? {
+        val baseline = stopping.walkStartStepCount ?: return null
+        val current = stepCountNow() ?: return null
+        if (current < baseline) return null
+        return (current - baseline).coerceAtLeast(0L)
+    }
+
     private suspend fun persist(value: WalkingSession) {
         if (value.id == 0L) return
         dao.updateSession(value.toEntity())
@@ -374,6 +397,8 @@ class WalkingRepositoryImpl(
                 updatedAtMillis = current.updatedMillis,
                 hasFix = current.hasFix,
                 errorMessage = current.errorMessage,
+                walkStartStepCount = current.walkStartStepCount,
+                walkStepCount = current.walkStepCount,
             )
         }
     }
@@ -401,6 +426,8 @@ private fun WalkingSessionEntity.toDomain(): WalkingSession = WalkingSession(
     lastLatitude = lastLatitude,
     lastLongitude = lastLongitude,
     errorMessage = errorMessage,
+    walkStartStepCount = walkStartStepCount,
+    walkStepCount = walkStepCount,
 )
 
 private fun WalkingSession.toEntity(): WalkingSessionEntity = WalkingSessionEntity(
@@ -418,6 +445,8 @@ private fun WalkingSession.toEntity(): WalkingSessionEntity = WalkingSessionEnti
     lastLatitude = lastLatitude,
     lastLongitude = lastLongitude,
     errorMessage = errorMessage,
+    walkStartStepCount = walkStartStepCount,
+    walkStepCount = walkStepCount,
 )
 
 private fun WalkingLocationPoint.toEntity(): WalkingLocationPointEntity = WalkingLocationPointEntity(

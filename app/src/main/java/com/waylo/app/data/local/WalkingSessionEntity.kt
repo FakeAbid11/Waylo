@@ -19,4 +19,6 @@ data class WalkingSessionEntity(
     val lastLatitude: Double?,
     val lastLongitude: Double?,
     val errorMessage: String?,
+    val walkStartStepCount: Long? = null,
+    val walkStepCount: Long? = null,
 )

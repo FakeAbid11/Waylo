@@ -86,6 +86,7 @@ class WayloApplication : Application() {
             permissionState = { permissionManager.stateOf(WayloPermission.FineLocation) },
             now = { System.currentTimeMillis() },
             measureDistance = { from, to -> FrameworkDistance.between(from, to) },
+            stepCountNow = { stepRepository.currentSensorCount() },
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
         )
     }

@@ -16,6 +16,7 @@ data class DailyStepState(
     val permissionState: PermissionState = PermissionState.NotRequested,
     val isTracking: Boolean = false,
     val isLoaded: Boolean = false,
+    val lastSensorCount: Long? = null,
 ) {
     val status: StepStatus
         get() = when {

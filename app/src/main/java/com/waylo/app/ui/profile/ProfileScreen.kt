@@ -43,6 +43,8 @@ import com.waylo.app.core.permissions.WayloPermission
 import com.waylo.app.domain.model.DailyGoalValidator
 import com.waylo.app.domain.model.GoalValidationResult
 import com.waylo.app.domain.model.UserProgress
+import com.waylo.app.domain.model.WeightValidationResult
+import com.waylo.app.domain.model.WeightValidator
 import com.waylo.app.ui.components.WayloCard
 import com.waylo.app.ui.components.WayloMascot
 import com.waylo.app.ui.components.WayloSectionHeader
@@ -59,6 +61,7 @@ fun ProfileRoute(modifier: Modifier = Modifier) {
     )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val stepState by application.stepRepository.state.collectAsStateWithLifecycle()
+    val weightKg by application.wayloPreferences.weightKg.collectAsStateWithLifecycle(initialValue = null)
     val goalScope = rememberCoroutineScope()
 
     LifecycleResumeEffect(Unit) {
@@ -69,8 +72,12 @@ fun ProfileRoute(modifier: Modifier = Modifier) {
     ProfileScreen(
         permissionStatuses = uiState.statuses,
         dailyStepGoal = stepState.goal,
+        weightKg = weightKg,
         onSaveDailyGoal = { goal ->
             goalScope.launch { application.stepRepository.setDailyGoal(goal) }
+        },
+        onSaveWeight = { weight ->
+            goalScope.launch { application.wayloPreferences.setWeightKg(weight) }
         },
         modifier = modifier,
     )
@@ -81,10 +88,13 @@ fun ProfileScreen(
     progress: UserProgress = UserProgress.empty(),
     permissionStatuses: List<PermissionStatus> = emptyList(),
     dailyStepGoal: Long = DailyGoalValidator.DEFAULT_STEPS,
+    weightKg: Int? = null,
     onSaveDailyGoal: (Long) -> Unit = {},
+    onSaveWeight: (Int?) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var showGoalDialog by rememberSaveable { mutableStateOf(false) }
+    var showWeightDialog by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -105,7 +115,9 @@ fun ProfileScreen(
         PermissionsSection(permissionStatuses)
         PreferencesSection(
             dailyStepGoal = dailyStepGoal,
+            weightKg = weightKg,
             onEditGoal = { showGoalDialog = true },
+            onEditWeight = { showWeightDialog = true },
         )
         SettingsSection()
 
@@ -116,6 +128,21 @@ fun ProfileScreen(
                 onSave = { goal ->
                     onSaveDailyGoal(goal)
                     showGoalDialog = false
+                },
+            )
+        }
+
+        if (showWeightDialog) {
+            WeightDialog(
+                currentWeightKg = weightKg,
+                onDismiss = { showWeightDialog = false },
+                onSave = { weight ->
+                    onSaveWeight(weight)
+                    showWeightDialog = false
+                },
+                onClear = {
+                    onSaveWeight(null)
+                    showWeightDialog = false
                 },
             )
         }
@@ -173,7 +200,12 @@ private fun PermissionsSection(statuses: List<PermissionStatus>) {
 }
 
 @Composable
-private fun PreferencesSection(dailyStepGoal: Long, onEditGoal: () -> Unit) {
+private fun PreferencesSection(
+    dailyStepGoal: Long,
+    weightKg: Int?,
+    onEditGoal: () -> Unit,
+    onEditWeight: () -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing)) {
         WayloSectionHeader(title = "Preferences")
         WayloCard(contentPadding = PaddingValues(0.dp)) {
@@ -181,6 +213,12 @@ private fun PreferencesSection(dailyStepGoal: Long, onEditGoal: () -> Unit) {
                 title = "Daily step goal",
                 value = WayloFormat.count(dailyStepGoal),
                 onClick = onEditGoal,
+            )
+            SettingDivider()
+            SettingRow(
+                title = "Weight",
+                value = weightKg?.let { "$it kg" } ?: WayloFormat.DASH,
+                onClick = onEditWeight,
             )
         }
     }
@@ -243,6 +281,75 @@ private fun DailyGoalDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text("Cancel")
+            }
+        },
+    )
+}
+
+@Composable
+private fun WeightDialog(
+    currentWeightKg: Int?,
+    onDismiss: () -> Unit,
+    onSave: (Int) -> Unit,
+    onClear: () -> Unit,
+) {
+    var text by rememberSaveable { mutableStateOf(currentWeightKg?.toString() ?: "") }
+    var errorMessage by rememberSaveable { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Weight",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+        },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { value ->
+                    text = value
+                    errorMessage = ""
+                },
+                label = { Text("Weight in kilograms") },
+                isError = errorMessage.isNotEmpty(),
+                supportingText = {
+                    Text(
+                        text = if (errorMessage.isNotEmpty()) {
+                            errorMessage
+                        } else {
+                            "Optional · used only to estimate calories"
+                        },
+                    )
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    when (val result = WeightValidator.validate(text)) {
+                        is WeightValidationResult.Valid -> onSave(result.weightKg)
+                        is WeightValidationResult.Invalid -> errorMessage = result.message
+                    }
+                },
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            Row {
+                if (currentWeightKg != null) {
+                    TextButton(onClick = onClear) {
+                        Text("Clear")
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel")
+                }
             }
         },
     )

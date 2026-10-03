@@ -73,6 +73,8 @@ fun ActiveWalkRoute(
             startService = { startWalkingService(context) },
             now = { System.currentTimeMillis() },
             networkStatus = application.mapNetworkStatus,
+            stepState = application.stepRepository.state,
+            weightKg = application.wayloPreferences.weightKg,
         ),
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -211,6 +213,7 @@ fun ActiveWalkScreen(
 
             if (state.status.state.isOngoing) {
                 WalkInfoPanel(state = state)
+                WorkoutStatsPanel(state = state)
             }
 
             Spacer(modifier = Modifier.weight(1f))
@@ -362,6 +365,93 @@ private fun WalkInfoPanel(state: ActiveWalkUiState) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun WorkoutStatsPanel(state: ActiveWalkUiState) {
+    WayloCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            StatsRow(
+                currentLabel = "Current pace",
+                currentValue = WayloFormat.pace(state.statistics.currentPaceSecondsPerKm),
+                averageLabel = "Average pace",
+                averageValue = WayloFormat.pace(state.statistics.averagePaceSecondsPerKm),
+            )
+            StatsRow(
+                currentLabel = "Current speed",
+                currentValue = WayloFormat.speed(state.statistics.currentSpeedMetersPerSecond),
+                averageLabel = "Average speed",
+                averageValue = WayloFormat.speed(state.statistics.averageSpeedMetersPerSecond),
+            )
+            StatsRow(
+                currentLabel = "Est. calories",
+                currentValue = WayloFormat.calories(state.statistics.estimatedCaloriesKcal),
+                averageLabel = "Walk steps",
+                averageValue = WayloFormat.steps(state.statistics.walkSteps),
+            )
+            if (state.weightKg == null) {
+                Text(
+                    text = "Add your weight in Profile to estimate calories.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatsRow(
+    currentLabel: String,
+    currentValue: String,
+    averageLabel: String,
+    averageValue: String,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
+    ) {
+        StatCell(
+            label = currentLabel,
+            value = currentValue,
+            modifier = Modifier.weight(1f),
+        )
+        StatCell(
+            label = averageLabel,
+            value = averageValue,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun StatCell(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -567,6 +657,43 @@ private fun CompletionContent(
                     modifier = Modifier.weight(1f),
                 )
             }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
+            ) {
+                WayloStatCard(
+                    value = WayloFormat.pace(state.statistics.averagePaceSecondsPerKm),
+                    label = "Avg pace",
+                    modifier = Modifier.weight(1f),
+                )
+                WayloStatCard(
+                    value = WayloFormat.speed(state.statistics.averageSpeedMetersPerSecond),
+                    label = "Avg speed",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
+            ) {
+                WayloStatCard(
+                    value = WayloFormat.calories(state.statistics.estimatedCaloriesKcal),
+                    label = "Est. kcal",
+                    modifier = Modifier.weight(1f),
+                )
+                WayloStatCard(
+                    value = WayloFormat.steps(state.statistics.walkSteps),
+                    label = "Steps",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (state.weightKg == null) {
+                Text(
+                    text = "Add your weight in Profile to estimate calories.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             WayloPrimaryButton(
                 text = "Done",
                 onClick = onDone,
@@ -632,6 +759,17 @@ private fun ActiveWalkScreenPreview() {
                 readiness = WalkReadiness.Ready,
                 elapsedMillis = 1_601_000L,
                 map = WalkMapState(styleLoaded = true),
+                weightKg = 70,
+                statistics = com.waylo.app.domain.model.WorkoutStatistics(
+                    distanceMeters = 2_140.0,
+                    activeMillis = 1_601_000L,
+                    averagePaceSecondsPerKm = 748.1,
+                    currentPaceSecondsPerKm = 420.0,
+                    averageSpeedMetersPerSecond = 1.34,
+                    currentSpeedMetersPerSecond = 2.38,
+                    estimatedCaloriesKcal = 143.6,
+                    walkSteps = 2_860L,
+                ),
             ),
             onRequestLocationPermission = {},
             onOpenSettings = {},

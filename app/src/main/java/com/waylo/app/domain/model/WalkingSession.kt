@@ -15,6 +15,8 @@ data class WalkingSession(
     val lastLatitude: Double? = null,
     val lastLongitude: Double? = null,
     val errorMessage: String? = null,
+    val walkStartStepCount: Long? = null,
+    val walkStepCount: Long? = null,
 ) {
     val hasFix: Boolean
         get() = lastLatitude != null && lastLongitude != null

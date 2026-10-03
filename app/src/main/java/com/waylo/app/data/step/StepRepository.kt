@@ -19,6 +19,7 @@ interface StepRepository {
     fun start()
     fun refresh()
     fun stop()
+    fun currentSensorCount(): Long?
     suspend fun setDailyGoal(goal: Long)
 }
 
@@ -55,6 +56,7 @@ class StepRepositoryImpl(
                 permissionState = permissionState(),
                 isTracking = tracking,
                 isLoaded = true,
+                lastSensorCount = record.lastSensorCount?.takeIf { it > 0L },
             )
         }
     }
@@ -76,6 +78,7 @@ class StepRepositoryImpl(
                 permissionState = permissionState(),
                 isTracking = tracking,
                 isLoaded = true,
+                lastSensorCount = record.lastSensorCount?.takeIf { it > 0L },
             )
             if (dayChanged) store.setRecord(record)
         }
@@ -90,6 +93,8 @@ class StepRepositoryImpl(
         val recordToPersist = record
         scope.launch { store.setRecord(recordToPersist) }
     }
+
+    override fun currentSensorCount(): Long? = _state.value.lastSensorCount
 
     override suspend fun setDailyGoal(goal: Long) {
         if (goal < DailyGoalValidator.MIN_STEPS || goal > DailyGoalValidator.MAX_STEPS) return
@@ -114,7 +119,10 @@ class StepRepositoryImpl(
         val previousDay = record.epochDay
         record = applySensorValue(record, rawValue, todayEpochDay())
         val dayChanged = record.epochDay != previousDay
-        _state.value = _state.value.copy(steps = record.todaySteps)
+        _state.value = _state.value.copy(
+            steps = record.todaySteps,
+            lastSensorCount = record.lastSensorCount?.takeIf { it > 0L },
+        )
         eventsSincePersist += 1
         if (dayChanged || eventsSincePersist >= PERSIST_EVERY_N_EVENTS) {
             store.setRecord(record)

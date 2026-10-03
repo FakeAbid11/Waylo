@@ -23,6 +23,8 @@ data class WalkingStatus(
     val updatedAtMillis: Long? = null,
     val hasFix: Boolean = false,
     val errorMessage: String? = null,
+    val walkStartStepCount: Long? = null,
+    val walkStepCount: Long? = null,
 ) {
     fun activeMillisAt(nowMillis: Long): Long {
         val segmentStart = activeSegmentStartMillis

@@ -1,12 +1,14 @@
 package com.waylo.app.data.walk
 
 import com.waylo.app.domain.model.WalkRoute
+import com.waylo.app.domain.model.WalkingSession
 import com.waylo.app.domain.model.WalkingStatus
 import kotlinx.coroutines.flow.StateFlow
 
 interface WalkingRepository {
     val status: StateFlow<WalkingStatus>
     val route: StateFlow<WalkRoute>
+    val lastCompletedSession: StateFlow<WalkingSession?>
 
     fun startWalk()
     fun pauseWalk()

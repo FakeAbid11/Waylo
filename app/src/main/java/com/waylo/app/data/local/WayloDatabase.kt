@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [SettingsEntity::class, WalkingSessionEntity::class, WalkingLocationPointEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class WayloDatabase : RoomDatabase() {
@@ -55,6 +55,17 @@ abstract class WayloDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `walking_sessions` ADD COLUMN `walkStartStepCount` INTEGER",
+                )
+                db.execSQL(
+                    "ALTER TABLE `walking_sessions` ADD COLUMN `walkStepCount` INTEGER",
+                )
+            }
+        }
+
         @Volatile
         private var instance: WayloDatabase? = null
 
@@ -69,7 +80,7 @@ abstract class WayloDatabase : RoomDatabase() {
                 context.applicationContext,
                 WayloDatabase::class.java,
                 DATABASE_NAME,
-            ).addMigrations(MIGRATION_1_2).build()
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
         }
     }
 }
