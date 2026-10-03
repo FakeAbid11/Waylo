@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,9 +16,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -38,9 +47,12 @@ import com.waylo.app.WayloApplication
 import com.waylo.app.core.permissions.WayloPermission
 import com.waylo.app.core.permissions.openAppSettings
 import com.waylo.app.core.util.WayloFormat
+import com.waylo.app.data.map.WalkMapLoadState
+import com.waylo.app.data.map.WalkMapState
 import com.waylo.app.domain.model.WalkingState
 import com.waylo.app.domain.model.WalkingStatus
 import com.waylo.app.service.WalkingForegroundService
+import com.waylo.app.ui.components.WayloCard
 import com.waylo.app.ui.components.WayloPrimaryButton
 import com.waylo.app.ui.components.WayloStatCard
 import com.waylo.app.ui.theme.WayloColors
@@ -60,6 +72,7 @@ fun ActiveWalkRoute(
             repository = application.walkingRepository,
             startService = { startWalkingService(context) },
             now = { System.currentTimeMillis() },
+            networkStatus = application.mapNetworkStatus,
         ),
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -112,6 +125,11 @@ fun ActiveWalkRoute(
             viewModel.finishCompleted()
             onDone()
         },
+        onMapStyleLoaded = viewModel::onMapStyleLoaded,
+        onMapStyleFailed = viewModel::onMapStyleFailed,
+        onMapPanGesture = viewModel::onMapPanGesture,
+        onRecenterMap = viewModel::onRecenterMap,
+        onRetryMapStyle = viewModel::retryMapStyle,
         modifier = modifier,
     )
 }
@@ -158,55 +176,83 @@ fun ActiveWalkScreen(
     onStopWalk: () -> Unit,
     onRetry: () -> Unit,
     onDone: () -> Unit,
+    onMapStyleLoaded: () -> Unit,
+    onMapStyleFailed: () -> Unit,
+    onMapPanGesture: () -> Unit,
+    onRecenterMap: () -> Unit,
+    onRetryMapStyle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showStopConfirmation by rememberSaveable { mutableStateOf(false) }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(
-                horizontal = WayloDimens.screenHorizontalPadding,
-                vertical = WayloDimens.screenVerticalPadding,
-            ),
-        verticalArrangement = Arrangement.spacedBy(WayloDimens.sectionSpacing),
-    ) {
-        when {
-            state.status.state == WalkingState.Completed -> CompletionContent(
-                state = state,
-                onDone = onDone,
+    Box(modifier = modifier.fillMaxSize()) {
+        WalkMap(
+            mapState = state.map,
+            route = state.route,
+            onStyleLoaded = onMapStyleLoaded,
+            onStyleFailed = onMapStyleFailed,
+            onPanGesture = onMapPanGesture,
+            modifier = Modifier.fillMaxSize(),
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(
+                    horizontal = WayloDimens.screenHorizontalPadding,
+                    vertical = WayloDimens.screenVerticalPadding,
+                ),
+            verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
+        ) {
+            MapStatusBanner(
+                mapState = state.map,
+                onRetryStyle = onRetryMapStyle,
             )
 
-            state.readiness == WalkReadiness.PermissionNeeded -> ReadinessContent(
-                message = "Location access is needed to record your walks.",
-                actionLabel = "Allow location access",
-                onAction = onRequestLocationPermission,
-            )
+            if (state.status.state.isOngoing) {
+                WalkInfoPanel(state = state)
+            }
 
-            state.readiness == WalkReadiness.PermissionPermanentlyDenied -> ReadinessContent(
-                message = "Location access is blocked. You can enable it in Android settings.",
-                actionLabel = "Open Settings",
-                onAction = onOpenSettings,
-            )
+            Spacer(modifier = Modifier.weight(1f))
 
-            state.readiness == WalkReadiness.LocationDisabled -> ReadinessContent(
-                message = "Turn on location so Waylo can record your walk.",
-                actionLabel = "Turn on location",
-                onAction = onOpenLocationSettings,
-            )
+            when {
+                state.status.state == WalkingState.Completed -> CompletionContent(
+                    state = state,
+                    onDone = onDone,
+                )
 
-            state.status.state == WalkingState.Error -> ErrorContent(
-                state = state,
-                onRetry = onRetry,
-                onFinish = onStopWalk,
-            )
+                state.readiness == WalkReadiness.PermissionNeeded -> ReadinessCard(
+                    message = "Location access is needed to record your walks.",
+                    actionLabel = "Allow location access",
+                    onAction = onRequestLocationPermission,
+                )
 
-            else -> TrackingContent(
-                state = state,
-                onPause = onPause,
-                onResume = onResume,
-                onStopWalk = { showStopConfirmation = true },
-            )
+                state.readiness == WalkReadiness.PermissionPermanentlyDenied -> ReadinessCard(
+                    message = "Location access is blocked. You can enable it in Android settings.",
+                    actionLabel = "Open Settings",
+                    onAction = onOpenSettings,
+                )
+
+                state.readiness == WalkReadiness.LocationDisabled -> ReadinessCard(
+                    message = "Turn on location so Waylo can record your walk.",
+                    actionLabel = "Turn on location",
+                    onAction = onOpenLocationSettings,
+                )
+
+                state.status.state == WalkingState.Error -> ErrorCard(
+                    state = state,
+                    onRetry = onRetry,
+                    onFinish = onStopWalk,
+                )
+
+                else -> TrackingControls(
+                    state = state,
+                    onPause = onPause,
+                    onResume = onResume,
+                    onStopWalk = { showStopConfirmation = true },
+                    onRecenter = onRecenterMap,
+                )
+            }
         }
     }
 
@@ -222,39 +268,125 @@ fun ActiveWalkScreen(
 }
 
 @Composable
-private fun TrackingContent(
+private fun MapStatusBanner(
+    mapState: WalkMapState,
+    onRetryStyle: () -> Unit,
+) {
+    val loadState = mapState.loadState
+    if (loadState == WalkMapLoadState.Ready) return
+
+    WayloCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
+        ) {
+            when (loadState) {
+                WalkMapLoadState.Loading -> {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = WayloColors.Cyan,
+                    )
+                    Text(
+                        text = "Loading map...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                WalkMapLoadState.Unavailable -> Text(
+                    text = "Map unavailable while offline. Your walk is still being recorded.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                WalkMapLoadState.StyleError -> {
+                    Text(
+                        text = "The map style failed to load.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = WayloColors.Orange,
+                    )
+                    TextButton(onClick = onRetryStyle) {
+                        Text("Retry")
+                    }
+                }
+
+                WalkMapLoadState.Ready -> Unit
+            }
+        }
+    }
+}
+
+@Composable
+private fun WalkInfoPanel(state: ActiveWalkUiState) {
+    WayloCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = "Walk",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = statusLabel(state),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = WayloColors.Cyan,
+                )
+            }
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = WayloFormat.duration(state.elapsedMillis),
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text = WayloFormat.distance(state.status.distanceMeters / 1_000.0),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrackingControls(
     state: ActiveWalkUiState,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStopWalk: () -> Unit,
+    onRecenter: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
     ) {
-        Text(
-            text = "Walk",
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        Text(
-            text = statusLabel(state),
-            style = MaterialTheme.typography.titleLarge,
-            color = WayloColors.Cyan,
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = WayloFormat.duration(state.elapsedMillis),
-            style = MaterialTheme.typography.displayLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        Text(
-            text = WayloFormat.distance(state.status.distanceMeters / 1_000.0),
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(modifier = Modifier.height(16.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            RecenterButton(
+                enabled = state.status.hasFix,
+                onClick = onRecenter,
+            )
+        }
         when (state.status.state) {
             WalkingState.Active -> ControlRow(
                 primaryLabel = "Pause",
@@ -272,6 +404,33 @@ private fun TrackingContent(
                 text = "Stop Walk",
                 onClick = onStopWalk,
                 modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecenterButton(
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+    ) {
+        IconButton(onClick = onClick, enabled = enabled) {
+            Icon(
+                imageVector = Icons.Filled.MyLocation,
+                contentDescription = if (enabled) {
+                    "Recenter map on your location"
+                } else {
+                    "Waiting for a GPS fix before the map can recenter"
+                },
+                tint = if (enabled) {
+                    WayloColors.Cyan
+                } else {
+                    WayloColors.OnSecondaryText.copy(alpha = 0.4f)
+                },
             )
         }
     }
@@ -310,65 +469,69 @@ private fun ControlRow(
 }
 
 @Composable
-private fun ReadinessContent(
+private fun ReadinessCard(
     message: String,
     actionLabel: String,
     onAction: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
-    ) {
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        WayloPrimaryButton(
-            text = actionLabel,
-            onClick = onAction,
+    WayloCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
             modifier = Modifier.fillMaxWidth(),
-        )
+            verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
+        ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            WayloPrimaryButton(
+                text = actionLabel,
+                onClick = onAction,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
 @Composable
-private fun ErrorContent(
+private fun ErrorCard(
     state: ActiveWalkUiState,
     onRetry: () -> Unit,
     onFinish: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
-    ) {
-        Text(
-            text = "Walk tracking",
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        Text(
-            text = state.status.errorMessage ?: "Something went wrong while tracking this walk.",
-            style = MaterialTheme.typography.bodyLarge,
-            color = WayloColors.Orange,
-        )
-        WayloPrimaryButton(
-            text = "Try again",
-            onClick = onRetry,
+    WayloCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
             modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedButton(
-            onClick = onFinish,
-            shape = WayloShapes.medium,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(WayloDimens.primaryButtonHeight),
+            verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
         ) {
             Text(
-                text = "Finish walk",
-                style = MaterialTheme.typography.titleMedium,
+                text = "Walk tracking",
+                style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onBackground,
             )
+            Text(
+                text = state.status.errorMessage ?: "Something went wrong while tracking this walk.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = WayloColors.Orange,
+            )
+            WayloPrimaryButton(
+                text = "Try again",
+                onClick = onRetry,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedButton(
+                onClick = onFinish,
+                shape = WayloShapes.medium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(WayloDimens.primaryButtonHeight),
+            ) {
+                Text(
+                    text = "Finish walk",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+            }
         }
     }
 }
@@ -378,37 +541,38 @@ private fun CompletionContent(
     state: ActiveWalkUiState,
     onDone: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
-    ) {
-        Text(
-            text = "Walk Complete",
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing)) {
-            WayloStatCard(
-                value = WayloFormat.distance(state.status.distanceMeters / 1_000.0),
-                label = "Distance",
-                modifier = Modifier.weight(1f),
+    WayloCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
+        ) {
+            Text(
+                text = "Walk Complete",
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onBackground,
             )
-            WayloStatCard(
-                value = WayloFormat.duration(state.elapsedMillis),
-                label = "Duration",
-                modifier = Modifier.weight(1f),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(WayloDimens.cardSpacing),
+            ) {
+                WayloStatCard(
+                    value = WayloFormat.distance(state.status.distanceMeters / 1_000.0),
+                    label = "Distance",
+                    modifier = Modifier.weight(1f),
+                )
+                WayloStatCard(
+                    value = WayloFormat.duration(state.elapsedMillis),
+                    label = "Duration",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            WayloPrimaryButton(
+                text = "Done",
+                onClick = onDone,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        WayloPrimaryButton(
-            text = "Done",
-            onClick = onDone,
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
 
@@ -467,6 +631,7 @@ private fun ActiveWalkScreenPreview() {
                 ),
                 readiness = WalkReadiness.Ready,
                 elapsedMillis = 1_601_000L,
+                map = WalkMapState(styleLoaded = true),
             ),
             onRequestLocationPermission = {},
             onOpenSettings = {},
@@ -476,6 +641,11 @@ private fun ActiveWalkScreenPreview() {
             onStopWalk = {},
             onRetry = {},
             onDone = {},
+            onMapStyleLoaded = {},
+            onMapStyleFailed = {},
+            onMapPanGesture = {},
+            onRecenterMap = {},
+            onRetryMapStyle = {},
         )
     }
 }

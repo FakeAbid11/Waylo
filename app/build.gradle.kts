@@ -56,6 +56,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
+    implementation(libs.maplibre.android.opengl)
     ksp(libs.androidx.room.compiler)
 
     testImplementation(libs.junit)

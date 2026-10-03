@@ -7,6 +7,7 @@ import com.waylo.app.data.local.WalkingLocationPointEntity
 import com.waylo.app.data.local.WalkingSessionEntity
 import com.waylo.app.data.location.LocationDataSource
 import com.waylo.app.domain.model.LocationSample
+import com.waylo.app.domain.model.WalkRoute
 import com.waylo.app.domain.model.WalkingLocationPoint
 import com.waylo.app.domain.model.WalkingSession
 import com.waylo.app.domain.model.WalkingState
@@ -31,6 +32,9 @@ class WalkingRepositoryImpl(
 
     private val _status = MutableStateFlow(WalkingStatus())
     override val status: StateFlow<WalkingStatus> = _status.asStateFlow()
+
+    private val _route = MutableStateFlow(WalkRoute())
+    override val route: StateFlow<WalkRoute> = _route.asStateFlow()
 
     private val mutex = Mutex()
     private val loaded = CompletableDeferred<Unit>()
@@ -60,6 +64,7 @@ class WalkingRepositoryImpl(
                 session = created.copy(id = id)
                 engine = WalkingEngine(measureDistance)
                 nextPointSequence = 0
+                _route.value = WalkRoute()
                 emitStatus()
                 beginTracking()
             }
@@ -84,6 +89,7 @@ class WalkingRepositoryImpl(
                 )
                 session = paused
                 persist(paused)
+                _route.value = _route.value.markBreakBeforeNextPoint()
                 emitStatus()
             }
         }
@@ -159,6 +165,7 @@ class WalkingRepositoryImpl(
                 if (session?.state != WalkingState.Completed) return@withLock
                 session = null
                 engine = null
+                _route.value = WalkRoute()
                 emitStatus()
             }
         }
@@ -256,6 +263,7 @@ class WalkingRepositoryImpl(
                     speedMps = sample.speedMps,
                 )
                 dao.recordProgress(updated.toEntity(), point.toEntity())
+                _route.value = _route.value.withPoint(point)
                 emitStatus()
             }
         }
@@ -303,6 +311,7 @@ class WalkingRepositoryImpl(
             WalkingState.Error -> {
                 session = restored
                 engine = WalkingEngine(measureDistance, restored.distanceMeters)
+                _route.value = loadRoute(restored.id)
                 emitStatus()
             }
             WalkingState.Completed, WalkingState.Idle -> Unit
@@ -314,9 +323,14 @@ class WalkingRepositoryImpl(
         val folded = closeSegments(recovered, recovered.updatedMillis).copy(updatedMillis = at)
         session = folded
         engine = WalkingEngine(measureDistance, folded.distanceMeters)
+        _route.value = loadRoute(folded.id)
         persist(folded)
         emitStatus()
     }
+
+    private suspend fun loadRoute(sessionId: Long): WalkRoute = WalkRoute(
+        points = dao.locationPoints(sessionId).map { it.toDomain() },
+    )
 
     private fun closeSegments(value: WalkingSession, atMillis: Long): WalkingSession = value.copy(
         activeMillis = foldActive(value, atMillis),
@@ -407,6 +421,17 @@ private fun WalkingSession.toEntity(): WalkingSessionEntity = WalkingSessionEnti
 )
 
 private fun WalkingLocationPoint.toEntity(): WalkingLocationPointEntity = WalkingLocationPointEntity(
+    sessionId = sessionId,
+    sequence = sequence,
+    latitude = latitude,
+    longitude = longitude,
+    timestampMillis = timestampMillis,
+    accuracyMeters = accuracyMeters,
+    altitudeMeters = altitudeMeters,
+    speedMps = speedMps,
+)
+
+private fun WalkingLocationPointEntity.toDomain(): WalkingLocationPoint = WalkingLocationPoint(
     sessionId = sessionId,
     sequence = sequence,
     latitude = latitude,

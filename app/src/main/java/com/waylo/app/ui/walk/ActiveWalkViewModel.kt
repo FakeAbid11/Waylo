@@ -6,15 +6,21 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.waylo.app.core.permissions.PermissionState
+import com.waylo.app.data.map.MapLatLng
+import com.waylo.app.data.map.WalkMapCameraPolicy
+import com.waylo.app.data.map.WalkMapState
 import com.waylo.app.data.walk.WalkingRepository
+import com.waylo.app.domain.model.WalkRoute
 import com.waylo.app.domain.model.WalkingState
 import com.waylo.app.domain.model.WalkingStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -34,28 +40,36 @@ data class ActiveWalkUiState(
     val status: WalkingStatus = WalkingStatus(),
     val readiness: WalkReadiness = WalkReadiness.Ready,
     val elapsedMillis: Long = 0L,
+    val route: WalkRoute = WalkRoute(),
+    val map: WalkMapState = WalkMapState(),
 )
 
 class ActiveWalkViewModel(
     private val repository: WalkingRepository,
     private val startService: () -> Unit,
     private val now: () -> Long,
+    private val networkStatus: Flow<Boolean> = flowOf(true),
     stateScope: CoroutineScope? = null,
 ) : ViewModel() {
 
     private val scope = stateScope ?: viewModelScope
     private val readiness = MutableStateFlow(WalkReadiness.Ready)
     private val tick = MutableStateFlow(now())
+    private val mapState = MutableStateFlow(WalkMapState())
 
     val uiState: StateFlow<ActiveWalkUiState> = combine(
         repository.status,
         readiness,
         tick,
-    ) { status, currentReadiness, nowMillis ->
+        repository.route,
+        mapState,
+    ) { status, currentReadiness, nowMillis, route, currentMap ->
         ActiveWalkUiState(
             status = status,
             readiness = currentReadiness,
             elapsedMillis = status.activeMillisAt(nowMillis),
+            route = route,
+            map = currentMap,
         )
     }.stateIn(
         scope = scope,
@@ -69,6 +83,38 @@ class ActiveWalkViewModel(
                 delay(TICK_INTERVAL_MS)
                 if (uiState.value.status.state == WalkingState.Active) {
                     tick.value = now()
+                }
+            }
+        }
+        scope.launch {
+            networkStatus.collect { available ->
+                mapState.value = WalkMapCameraPolicy.onNetworkChanged(mapState.value, available)
+            }
+        }
+        scope.launch {
+            repository.route.collect { route ->
+                val latest = route.latestOrNull() ?: return@collect
+                mapState.value = WalkMapCameraPolicy.onFix(
+                    mapState.value,
+                    MapLatLng(latest.latitude, latest.longitude),
+                )
+            }
+        }
+        scope.launch {
+            repository.status.collect { status ->
+                when (status.state) {
+                    WalkingState.Starting -> {
+                        mapState.value = WalkMapCameraPolicy.onWalkStarting(mapState.value)
+                    }
+
+                    WalkingState.Completed -> {
+                        mapState.value = WalkMapCameraPolicy.onWalkCompleted(
+                            mapState.value,
+                            repository.route.value,
+                        )
+                    }
+
+                    else -> Unit
                 }
             }
         }
@@ -129,6 +175,26 @@ class ActiveWalkViewModel(
         repository.dismissCompleted()
     }
 
+    fun onMapStyleLoaded() {
+        mapState.value = WalkMapCameraPolicy.onStyleLoaded(mapState.value)
+    }
+
+    fun onMapStyleFailed() {
+        mapState.value = WalkMapCameraPolicy.onStyleFailed(mapState.value)
+    }
+
+    fun onMapPanGesture() {
+        mapState.value = WalkMapCameraPolicy.onMapPan(mapState.value)
+    }
+
+    fun onRecenterMap() {
+        mapState.value = WalkMapCameraPolicy.onRecenter(mapState.value)
+    }
+
+    fun retryMapStyle() {
+        mapState.value = WalkMapCameraPolicy.onRetryStyle(mapState.value)
+    }
+
     private fun startServiceSafely() {
         try {
             startService()
@@ -144,12 +210,14 @@ class ActiveWalkViewModel(
             repository: WalkingRepository,
             startService: () -> Unit,
             now: () -> Long,
+            networkStatus: Flow<Boolean> = flowOf(true),
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 ActiveWalkViewModel(
                     repository = repository,
                     startService = startService,
                     now = now,
+                    networkStatus = networkStatus,
                 )
             }
         }
