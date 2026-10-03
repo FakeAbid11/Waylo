@@ -104,8 +104,14 @@ completion fitting), `WalkingRepository` state transitions with a fake location 
 error paths) plus its live `route` flow (append/pause segments/dismiss/DB restore),
 `WalkRoute` segments and bounds, exact route/marker GeoJSON rendering (including pause
 splitting), `WalkMapCameraPolicy` (load-state machine, follow thresholds, recenter, fitting
-the finished route), `FrameworkDistance` under Robolectric, and the Room 1 → 2 schema
-migration against a hand-built v1 database.
+the finished route), `FrameworkDistance` under Robolectric, the Room 1 → 2 and 2 → 3
+schema migrations against hand-built v1/v2 databases, the pure `WorkoutStatisticsCalculator`
+(average thresholds and invalid inputs, the rolling current-pace window with pause/gap/noise
+rules, MET-based calorie estimates, walk-step deltas and counter resets), the pace/speed/
+calorie/step formatters plus the meters/kilometers distance format, `WeightValidator`,
+`WayloPreferences` weight persistence, raw sensor-counter exposure, repository walk-step
+baselines (capture/snapshot/unavailable/reset/process-death recovery/`lastCompletedSession`
+restore) and `ActiveWalkViewModel` statistics wiring.
 
 ## GitHub Actions
 
@@ -221,6 +227,61 @@ Failing compilation or failing unit tests fail the workflow.
   fits), repository route tests (append/pause segments/dismiss/process-death restore/error
   restore) and ViewModel map tests (style lifecycle, network transitions, camera commands,
   completion fits exactly once).
+
+## Workout statistics (Phase 6)
+
+- Architecture: GPS and step services are unchanged — both feed pure functions with
+  injected time: `WalkingRepository` (persisted distance/active time/route/final step
+  snapshot) and `StepRepository` (raw cumulative sensor counter) →
+  `WorkoutStatisticsCalculator` (pure Kotlin in `core/common`, no Compose/Android/
+  MapLibre imports) → `WorkoutStatistics` on `ActiveWalkUiState` → Active Walk overlay
+  and completion summary. "Now", sensor values and every input are injected; no
+  statistics are computed inside a Composable.
+- Distance display: meters below one kilometer (`245 m`), two-decimal kilometers from
+  one kilometer on (`1.24 km`, `10.00 km`); negative/non-finite input clamps to
+  `0 km`.
+- Average pace/speed: accepted walk distance over active duration, only when the walk
+  has at least 10 m and positive active time; non-finite values and physically
+  impossible results (speed above 15 m/s, mirrored as pace below ~66.7 s/km) are
+  unavailable instead of displayed.
+- Current pace/speed: one shared rolling window — accepted route points from the last
+  45 s after the last pause break, split on gaps longer than 15 s (only the latest
+  chunk counts), needing at least two points and at least 10 m of movement. Paused
+  walks show `—` (no stale readings, no resume spike), and pace and speed always come
+  from the same window so they can never contradict each other; the window measures
+  point-to-point path length, not a straight line.
+- Estimated calories: `MET × weight_kg × active hours`, with walking METs from the
+  Compendium of Physical Activities speed bins (<3.2 → 2.8, <4.0 → 3.0, <4.8 → 3.5,
+  <5.6 → 4.3, <6.4 → 5.0, ≥6.4 → 6.3 km/h) and the documented 3.5 MET default when
+  no average speed exists yet. Weight is an optional Profile preference (20–300 kg,
+  DataStore); without one the estimate is honestly `—` (with a Profile hint) rather
+  than an invented default, and zero active time yields 0. It is an estimate, not a
+  medical figure, and it is re-derived from persisted distance/duration plus the
+  current weight whenever viewed (editing weight changes past estimates on re-view).
+- Walk steps: delta of the raw cumulative sensor counter — the baseline is captured
+  when the walk starts and the final snapshot is persisted when it stops
+  (`walking_sessions.walkStartStepCount` / `walkStepCount`, Room migration 2→3 via
+  non-destructive `ALTER TABLE`). While walking the live value is `current −
+  baseline`; a counter reset (device reboot), a missing baseline or missing counts
+  yield `—`, never a negative or GPS-guessed number. The baseline is per walk, so a
+  midnight rollover cannot corrupt it, and daily step totals/goals stay untouched.
+  Live deltas can include steps taken for other reasons while paused (the sensor is
+  real and not frozen).
+- Persistence: distance, duration and the final step count are stored at stop;
+  averages and calories are re-derived from persisted data. A new
+  `lastCompletedSession: StateFlow` exposes the most recent finished walk (restored
+  at startup) for tests and later phases — there is no history UI in this phase.
+- UI: an ongoing walk keeps status/duration/distance primary and adds a compact stats
+  card (current/average pace, current/average speed, Est. calories, walk steps — all
+  rendering `—` when unavailable); the completion summary shows six tiles (distance,
+  duration, avg pace, avg speed, Est. kcal, steps).
+- Tests (267 total, 53 added): calculator suite (average thresholds and invalid
+  inputs, rolling-window/pause/gap/noise rules, window consistency, MET bins, calorie
+  rules, step deltas and counter resets), formatter coverage for distance/pace/speed/
+  calories/steps, `WeightValidatorTest`, repository step-baseline tests (capture,
+  snapshot, unavailable, reset, process-death recovery, `lastCompletedSession`
+  restore), Room migration 2→3 test (new columns, preserved data), preferences weight
+  test, raw sensor counter test and ViewModel statistics tests.
 
 ## Design system
 
